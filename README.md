@@ -160,6 +160,8 @@ videobot/
 └── README.md
 ```
 
+Like this project? You can [buy me a coffee](https://www.buymeacoffee.com/shadowfetcu).
+
 ---
 
 ## License
