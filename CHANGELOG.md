@@ -10,6 +10,7 @@
 - Add audio-only output, subtitles, metadata, thumbnails, time ranges and editing-compatible conversion.
 - Repair relative/nested metadata extraction, pagination cycles, button handling, scope filtering and JavaScript escapes.
 - Add session-only cookie configuration, redacted plain-text logs, disk budgets, bounded retries and diagnostics.
+- Switch to PySide6 Essentials and collect third-party notices for desktop packages.
 - Add local regression/integration fixtures, platform CI, packaging workflows and updated documentation.
 
 Release status and validation limits are recorded in docs/RELEASE-AUDIT.md. This entry does not assert that publication or final acceptance has occurred.

@@ -175,7 +175,7 @@ def test_webm_merge_uses_webm(tmp_path):
     with patch("yt_dlp.YoutubeDL") as ctor:
         ctor.return_value.__enter__.return_value.extract_info.return_value = {}
         with pytest.raises(ValueError):
-            dl._ytdlp(Candidate("https://example.com/video"), work)
+            dl._ytdlp_inline(Candidate("https://example.com/video"), work)
     assert ctor.call_args.args[0]["merge_output_format"] == "webm"
     assert ctor.call_args.args[0]["progress_hooks"]
 

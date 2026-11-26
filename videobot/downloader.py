@@ -6,6 +6,10 @@ import os
 import re
 import shutil
 import time
+import subprocess
+import sys
+import tempfile
+from dataclasses import asdict
 from email.utils import parsedate_to_datetime
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,7 +20,7 @@ import yt_dlp
 from yt_dlp.utils import download_range_func
 
 from .models import Candidate, Options
-from .runtime import Logger, media_probe, redact, run_checked
+from .runtime import Logger, media_probe, redact, run_checked, terminate_process_tree
 
 
 def format_selector(options):
@@ -90,7 +94,7 @@ class Downloader:
         if final.exists():
             manifest_path = final / "manifest.json"
             if manifest_path.is_file():
-                manifest = json.loads(manifest_path.read_text())
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
                 if manifest.get("job_id") == job_id and self._verify_bundle(final, manifest):
                     return str(final)
             raise FileExistsError("Output folder already exists and was not verified. Existing files were preserved.")
@@ -162,13 +166,18 @@ class Downloader:
         files = []
         for path in ready.iterdir():
             files.append({"name": path.name, "bytes": path.stat().st_size, "sha256": self._hash(path)})
+        source_url = redact(candidate.url)
+        extractor = info.get("extractor_key") or candidate.extractor
+        media_id = info.get("id") or candidate.media_id
+        if str(extractor).lower() == "youtube" and re.fullmatch(r"[A-Za-z0-9_-]{11}", str(media_id)):
+            source_url = "https://www.youtube.com/watch?v=" + str(media_id)
         manifest = {
             "schema": 1,
             "job_id": job_id,
             "title": info.get("title") or candidate.title,
             "creator": info.get("uploader") or candidate.creator,
-            "source_url": redact(candidate.url),
-            "source_query_redacted": bool(urlsplit(candidate.url).query),
+            "source_url": source_url,
+            "source_query_redacted": bool(urlsplit(candidate.url).query) and source_url != candidate.url,
             "extractor": info.get("extractor_key") or candidate.extractor,
             "media_id": info.get("id") or candidate.media_id,
             "retrieved_at": datetime.now(timezone.utc).isoformat(),
@@ -178,7 +187,9 @@ class Downloader:
             "duration": probe.get("format", {}).get("duration"),
             "chapters": info.get("chapters") or [],
         }
-        (ready / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
+        (ready / "manifest.json").write_text(
+            json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
         self.cancel.check()
         if final.exists():
             raise FileExistsError("Output appeared during finalization; it was preserved.")
@@ -207,6 +218,80 @@ class Downloader:
         return True
 
     def _ytdlp(self, candidate, work):
+        # Supervise extraction, fragment downloads and FFmpeg postprocessing alike.
+        # This also makes headless CLI jobs cancellable and continuously enforces
+        # disk budgets while third-party code is blocked inside a subprocess.
+        with tempfile.TemporaryDirectory(prefix="videobot-transfer-") as temporary:
+            root = Path(temporary)
+            request = root / "request.json"
+            events = root / "events.jsonl"
+            data = {
+                "action": "download",
+                "candidate": candidate.to_dict(),
+                "options": asdict(self.options),
+                "work": str(work),
+                "event_path": str(events),
+            }
+            if self.cancel.path:
+                data["cancel_path"] = str(self.cancel.path)
+            request.write_text(json.dumps(data), encoding="utf-8")
+            request.chmod(0o600)
+            command = [sys.executable, "-m", "videobot.cli", "_task", str(request)]
+            if getattr(sys, "frozen", False):
+                command = [sys.executable, "--worker-task", str(request)]
+            kwargs = (
+                {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+                if os.name == "nt"
+                else {"start_new_session": True}
+            )
+            with (
+                events.open("w", encoding="utf-8") as output,
+                events.open("r", encoding="utf-8", errors="replace") as incoming,
+            ):
+                process = subprocess.Popen(command, stdout=output, stderr=output, **kwargs)
+                result = None
+                error = None
+                buffer = ""
+                try:
+                    while True:
+                        self.cancel.check()
+                        self.budget(work, sum(p.stat().st_size for p in work.rglob("*") if p.is_file()))
+                        chunk = incoming.read()
+                        buffer += chunk
+                        lines = buffer.split("\n")
+                        buffer = lines.pop()
+                        for line in lines:
+                            try:
+                                event = json.loads(line)
+                            except json.JSONDecodeError:
+                                if line.strip():
+                                    self.emit("log", message=redact(line))
+                                continue
+                            if not isinstance(event, dict):
+                                continue
+                            kind = event.pop("type", "log")
+                            if kind == "transfer_complete":
+                                result = event
+                            elif kind == "error":
+                                error = event.get("message", "Transfer failed")
+                            else:
+                                self.emit(kind, **event)
+                        if process.poll() is not None and not chunk:
+                            break
+                        self.cancel.wait(0.05)
+                    if process.returncode or not result:
+                        raise RuntimeError(
+                            error or f"Transfer process exited without an output (status {process.returncode})."
+                        )
+                    media = Path(result["path"]).resolve()
+                    if not media.is_relative_to(work.resolve()) or not media.is_file():
+                        raise ValueError("Transfer returned an invalid output path.")
+                    return media, result["info"]
+                finally:
+                    if process.poll() is None:
+                        terminate_process_tree(process)
+
+    def _ytdlp_inline(self, candidate, work):
         paths = []
         opts = common_options(self.options, self.emit, self.cancel)
         last = [0.0]

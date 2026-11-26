@@ -6,6 +6,7 @@ from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
+from playwright.sync_api import sync_playwright
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -47,3 +48,11 @@ def media_site(tmp_path):
     server.shutdown()
     server.server_close()
     thread.join()
+
+
+@pytest.fixture
+def browser():
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        yield browser
+        browser.close()

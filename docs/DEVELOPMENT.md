@@ -19,12 +19,16 @@ On Windows set `QT_QPA_PLATFORM=offscreen` through your shell instead of the inl
 
 ```sh
 # Optional: bundle the browser instead of downloading it after installation.
-PLAYWRIGHT_BROWSERS_PATH=0 python -m playwright install chromium
+PLAYWRIGHT_BROWSERS_PATH=0 python -m playwright install --only-shell chromium
 python scripts/build.py
 ```
 
-The PyInstaller build bundles Python, Qt, yt-dlp, EJS and Playwright. Bundled Chromium requires the install command above. FFmpeg/ffprobe and a JS runtime remain explicit system dependencies. The Diagnostics action shows what is available. Distribution must include applicable third-party license notices; the repository's MIT license does not replace dependency licenses.
+The PyInstaller build bundles Python, Qt/PySide6 Essentials, yt-dlp, EJS and Playwright. It collects installed production dependency license/notice files under `THIRD-PARTY-NOTICES`, with a version and upstream-link index. Qt libraries remain separate shared libraries in the directory-style bundle. Bundled headless Chromium requires the install command above. FFmpeg/ffprobe and a JS runtime remain explicit system dependencies. The Diagnostics action shows what is available. Distribution must include applicable third-party license notices; the repository's MIT license does not replace dependency licenses.
 
 The Desktop packages workflow builds a Windows per-user Inno Setup installer, a macOS disk image and a Linux portable archive, each with SHA-256 checksums. These packages are unsigned/unnotarized unless a later release configures signing. Workflow artifacts are build outputs; they are not automatically advertised as a published release. Verify the release audit before publishing.
 
 `VideoBot.app` in the repository is the historical source launcher. New generated bundles live only under `dist/`; do not replace the tracked launcher with a large generated build.
+
+## Qt binding and licensing
+
+The 2.0 release uses PySide6 Essentials (Qt for Python), with LGPL-available Qt modules, in place of the original GPL/commercial PyQt binding. The project source retains its existing MIT license; dependency licenses remain applicable. See the [Qt for Python license documentation](https://doc.qt.io/qtforpython-6/licenses.html) and [PyQt licensing](https://www.riverbankcomputing.com/software/pyqt/intro). Do not remove bundled notices or prevent users from replacing compatible shared Qt libraries. The build does not bundle a system FFmpeg build.

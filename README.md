@@ -2,9 +2,9 @@
 
 **Discover media, choose what to save, and keep a reliable download library.**
 
-VideoBot is a Python/PyQt6 desktop app and headless CLI built around yt-dlp, Playwright and FFmpeg. Version 2.0 replaces the original gallery-only loop with preview and selection, a persistent queue, validated outputs and recoverable job states.
+VideoBot is a Python/PySide6 desktop app and headless CLI built around yt-dlp, Playwright and FFmpeg. Version 2.0 replaces the original gallery-only loop with preview and selection, a persistent queue, validated outputs and recoverable job states.
 
-> Development status: the 2.0 upgrade is under validation. See [release audit](docs/RELEASE-AUDIT.md) for actual checks and remaining gates. A feature listed here is not a claim that every website, authenticated account or OS configuration has been tested.
+> Version 2.0 release candidate. See the [release audit](docs/RELEASE-AUDIT.md) for verification and platform status. Upstream website and authenticated-account behavior is not implied by local acceptance tests.
 
 ![VideoBot desktop preview with example fixture](docs/images/desktop.png)
 

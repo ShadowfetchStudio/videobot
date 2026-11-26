@@ -32,7 +32,7 @@ def test_actual_worker_and_close_shutdown(qtbot, tmp_path):
     win.show()
     win.start_task({"action": "inspect", "urls": ["http://10.255.255.1/never"], "options": win.options().public_dict()})
     win.close()
-    qtbot.waitUntil(lambda: not win.worker.isRunning(), timeout=8000)
+    qtbot.waitUntil(lambda: win.worker is None or not win.worker.isRunning(), timeout=8000)
     qtbot.waitUntil(lambda: not win.isVisible(), timeout=2000)
 
 

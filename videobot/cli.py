@@ -7,7 +7,7 @@ import uuid
 from pathlib import Path
 
 from .engine import inspect_urls, run_queue
-from .models import Options
+from .models import Candidate, Options
 from .runtime import Cancelled, Cancellation, diagnostics, emit_stdout, redact
 from .storage import Store
 
@@ -20,6 +20,15 @@ def task(request):
         sys.stderr = sys.stdout
     cancel = Cancellation(request.get("cancel_path"))
     try:
+        if request["action"] == "download":
+            from .downloader import Downloader
+
+            path, info = Downloader(Options(**request["options"]), cancel, emit_stdout)._ytdlp_inline(
+                Candidate(**request["candidate"]), Path(request["work"])
+            )
+            public = {key: info.get(key) for key in ("title", "uploader", "extractor_key", "id", "chapters")}
+            emit_stdout("transfer_complete", path=str(path), info=public)
+            return 0
         if request["action"] == "inspect":
             inspect_urls(request["urls"], Options(**request["options"]), cancel, emit_stdout)
             return 0
@@ -62,7 +71,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.command == "_task":
         request_path = Path(args.request)
-        request = json.loads(request_path.read_text())
+        request = json.loads(request_path.read_text(encoding="utf-8"))
         request_path.unlink()
         return task(request)
     if args.command == "doctor":

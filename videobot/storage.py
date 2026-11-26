@@ -40,10 +40,11 @@ class Store:
         );
         CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
         """)
-        columns = {r[1] for r in self.db.execute("PRAGMA table_info(jobs)")}
-        if "process_created" not in columns:
-            self.db.execute("ALTER TABLE jobs ADD COLUMN process_created REAL DEFAULT 0")
-            self.db.commit()
+        with self.db:
+            self.db.execute("BEGIN IMMEDIATE")
+            columns = {r[1] for r in self.db.execute("PRAGMA table_info(jobs)")}
+            if "process_created" not in columns:
+                self.db.execute("ALTER TABLE jobs ADD COLUMN process_created REAL DEFAULT 0")
         try:
             self.path.chmod(0o600)
         except OSError:

@@ -1,17 +1,6 @@
-import pytest
-from playwright.sync_api import sync_playwright
-
 from videobot.discovery import SCAN, Discovery
 from videobot.models import Options
 from videobot.runtime import Cancellation
-
-
-@pytest.fixture
-def browser():
-    with sync_playwright() as pw:
-        browser = pw.chromium.launch()
-        yield browser
-        browser.close()
 
 
 def page_for(browser, html):

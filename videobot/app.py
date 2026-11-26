@@ -5,10 +5,10 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QTimer, QUrl
-from PyQt6.QtGui import QDesktopServices, QImageReader, QPixmap
-from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkRequest
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import Qt, QTimer, QUrl
+from PySide6.QtGui import QDesktopServices, QImageReader, QPixmap
+from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest
+from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
@@ -203,6 +203,7 @@ class MainWindow(QMainWindow):
         r.setContentsMargins(5, 5, 5, 5)
         profiles = QHBoxLayout()
         self.profile = QComboBox()
+        self.profile.setPlaceholderText("Saved profiles")
         profiles.addWidget(self.profile, 1)
         profiles.addWidget(self.button("Load", self.load_profile))
         profiles.addWidget(self.button("Save", self.save_profile))
@@ -371,7 +372,7 @@ class MainWindow(QMainWindow):
             try:
                 if Path(path).stat().st_size > 1024 * 1024:
                     raise ValueError("URL file is too large (maximum 1 MiB).")
-                self.urls.setPlainText(Path(path).read_text())
+                self.urls.setPlainText(Path(path).read_text(encoding="utf-8"))
             except Exception as exc:
                 self._error(exc)
 
@@ -483,7 +484,11 @@ class MainWindow(QMainWindow):
 
     def run_queue(self):
         try:
-            options = self.options()
+            # Queued jobs already have validated output policies. Only current
+            # session authentication applies when running them.
+            options = Options(
+                cookie_file=self.cookie_file.text(), cookie_browser=self.cookie_browser.currentText()
+            ).validate()
             self.start_task(
                 {
                     "action": "run",
@@ -539,8 +544,10 @@ class MainWindow(QMainWindow):
             for row in self.store.rows():
                 manifest = Path(row["output"]) / "manifest.json" if row["output"] else None
                 if manifest and manifest.is_file():
-                    entries.append(json.loads(manifest.read_text()))
-            Path(path).write_text(json.dumps({"schema": 1, "items": entries}, indent=2, ensure_ascii=False) + "\n")
+                    entries.append(json.loads(manifest.read_text(encoding="utf-8")))
+            Path(path).write_text(
+                json.dumps({"schema": 1, "items": entries}, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+            )
             self.status.setText(f"Exported {len(entries)} completed items.")
         except Exception as exc:
             self._error(exc)
@@ -587,6 +594,10 @@ class MainWindow(QMainWindow):
         self.status.setText("Stopping safely… unfinished jobs can be retried.")
 
     def task_finished(self):
+        finished = self.worker
+        self.worker = None
+        if finished:
+            finished.deleteLater()
         self.run_btn.setEnabled(True)
         self.inspect_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
@@ -609,6 +620,7 @@ class MainWindow(QMainWindow):
     def _refresh_profiles(self):
         self.profile.clear()
         self.profile.addItems(sorted(self.store.setting("profiles", {})))
+        self.profile.setCurrentIndex(-1)
 
     def load_profile(self):
         data = self.store.setting("profiles", {}).get(self.profile.currentText())
@@ -652,11 +664,19 @@ def main():
         from .cli import main as cli_main
 
         return cli_main(["_task", sys.argv[2]])
-    app = QApplication(sys.argv)
+    smoke_image = sys.argv[2] if len(sys.argv) > 2 and sys.argv[1] == "--smoke-ui" else None
+    app = QApplication(sys.argv[:1] if smoke_image else sys.argv)
     app.setApplicationName("VideoBot")
     app.setOrganizationName("ShadowfetchStudio")
     window = MainWindow()
     window.show()
+    if smoke_image:
+
+        def capture():
+            window.grab().save(smoke_image)
+            window.close()
+
+        QTimer.singleShot(300, capture)
     return app.exec()
 
 

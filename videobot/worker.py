@@ -2,7 +2,6 @@
 
 import json
 import os
-import signal
 import subprocess
 import sys
 import tempfile
@@ -11,14 +10,14 @@ import time
 import uuid
 from pathlib import Path
 
-from PyQt6.QtCore import QThread, pyqtSignal
+from PySide6.QtCore import QThread, Signal
 
-from .runtime import redact
+from .runtime import redact, terminate_process_tree
 from .storage import Store
 
 
 class TaskWorker(QThread):
-    event = pyqtSignal(dict)
+    event = Signal(dict)
 
     def __init__(self, request, parent=None):
         super().__init__(parent)
@@ -40,7 +39,7 @@ class TaskWorker(QThread):
                 cancel = root / "cancel"
                 self.request["cancel_path"] = str(cancel)
                 self.request["event_path"] = str(root / "events.jsonl")
-                request.write_text(json.dumps(self.request))
+                request.write_text(json.dumps(self.request), encoding="utf-8")
                 request.chmod(0o600)
                 command = [sys.executable, "-m", "videobot.cli", "_task", str(request)]
                 if getattr(sys, "frozen", False):
@@ -54,7 +53,10 @@ class TaskWorker(QThread):
                 env["PYTHONUNBUFFERED"] = "1"
                 # File-backed event pipe avoids an uninterruptible readline on a silent downloader.
                 log = root / "events.jsonl"
-                with log.open("w") as output, log.open("r") as incoming:
+                with (
+                    log.open("w", encoding="utf-8") as output,
+                    log.open("r", encoding="utf-8", errors="replace") as incoming,
+                ):
                     if self._stop.is_set():
                         self.event.emit({"type": "result", "status": "cancelled"})
                         return
@@ -109,16 +111,4 @@ class TaskWorker(QThread):
                 finally:
                     store.close()
 
-    @staticmethod
-    def _kill_tree(process):
-        if os.name == "nt":
-            subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], capture_output=True, timeout=10)
-        else:
-            try:
-                os.killpg(process.pid, signal.SIGTERM)
-                process.wait(timeout=1)
-            except subprocess.TimeoutExpired:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-        process.wait(timeout=10)
+    _kill_tree = staticmethod(terminate_process_tree)

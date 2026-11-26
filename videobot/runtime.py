@@ -79,7 +79,7 @@ def diagnostics():
     result = {"version": __version__, "python": sys.version.split()[0], "tools": {}, "packages": {}}
     for name in ("ffmpeg", "ffprobe", "deno", "node"):
         result["tools"][name] = shutil.which(name)
-    for name in ("yt-dlp", "yt-dlp-ejs", "playwright", "PyQt6"):
+    for name in ("yt-dlp", "yt-dlp-ejs", "playwright", "PySide6-Essentials"):
         try:
             result["packages"][name] = importlib.metadata.version(name)
         except importlib.metadata.PackageNotFoundError:
@@ -88,7 +88,9 @@ def diagnostics():
         from playwright.sync_api import sync_playwright
 
         with sync_playwright() as pw:
-            result["chromium"] = Path(pw.chromium.executable_path).exists()
+            browser = pw.chromium.launch(headless=True)
+            browser.close()
+            result["chromium"] = True
     except Exception:
         result["chromium"] = False
     return result
@@ -149,3 +151,34 @@ def media_probe(path, cancel, audio_only=False):
     if Path(path).stat().st_size == 0:
         raise ValueError("The downloaded file is empty.")
     return data
+
+
+def terminate_process_tree(process):
+    """Terminate a managed process and descendants, including detached children."""
+    import os
+    import signal
+    import psutil
+
+    try:
+        children = psutil.Process(process.pid).children(recursive=True)
+    except psutil.NoSuchProcess:
+        children = []
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], capture_output=True, timeout=10)
+    else:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+    try:
+        process.wait(timeout=1)
+    except subprocess.TimeoutExpired:
+        process.kill()
+    for child in children:
+        try:
+            if child.is_running():
+                child.kill()
+        except psutil.NoSuchProcess:
+            pass
+    psutil.wait_procs(children, timeout=2)
+    process.wait(timeout=5)

@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 authors = [{name = "ShadowfetchStudio"}]
-dependencies = ["PyQt6>=6.8,<7", "playwright>=1.50,<2", "yt-dlp[default]>=2026.11.23", "requests>=2.32.4,<3", "psutil>=6,<8"]
+dependencies = ["PySide6-Essentials>=6.8,<7", "playwright>=1.50,<2", "yt-dlp[default]>=2026.11.23", "requests>=2.32.4,<3", "psutil>=6,<8"]
 
 [project.scripts]
 videobot = "videobot.cli:main"
@@ -24,6 +24,7 @@ include = ["videobot*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+qt_api = "pyside6"
 
 [tool.ruff]
 line-length = 120

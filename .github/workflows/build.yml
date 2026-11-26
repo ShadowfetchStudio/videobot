@@ -1,5 +1,6 @@
 name: Desktop packages
 on:
+  pull_request:
   workflow_dispatch:
   push:
     tags: ['v*']
@@ -21,8 +22,19 @@ jobs:
       - name: Bundle Chromium
         env:
           PLAYWRIGHT_BROWSERS_PATH: '0'
-        run: python -m playwright install chromium
+        run: python -m playwright install --only-shell chromium
+      - name: Install media tools (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg libegl1 libxcb-cursor0
+      - name: Install media tools (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg
+      - name: Install media tools (Windows)
+        if: runner.os == 'Windows'
+        run: choco install ffmpeg -y --no-progress
       - run: python scripts/build.py
+      - name: Exercise packaged browser and native download
+        run: python scripts/package_smoke.py
       - name: Windows installer
         if: runner.os == 'Windows'
         shell: pwsh
