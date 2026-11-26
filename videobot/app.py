@@ -6,6 +6,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, QUrl
+from shiboken6 import delete
 from PySide6.QtGui import QDesktopServices, QImageReader, QPixmap
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest
 from PySide6.QtWidgets import (
@@ -677,7 +678,11 @@ def main():
             window.close()
 
         QTimer.singleShot(300, capture)
-    return app.exec()
+    result = app.exec()
+    # Destroy widgets while QApplication and the Python bindings are still alive.
+    # Frozen Linux/Windows builds otherwise crash in PySide atexit cleanup.
+    delete(window)
+    return result
 
 
 if __name__ == "__main__":

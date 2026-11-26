@@ -43,3 +43,22 @@ def test_builtin_profiles_and_no_persisted_auth(qtbot, tmp_path):
     assert {"Source archive", "Editing H.264", "Audio MP3"} <= set(profiles)
     assert all("cookie_file" not in data and "cookie_browser" not in data for data in profiles.values())
     win.close()
+
+
+def test_desktop_process_exits_cleanly(tmp_path):
+    import os
+    from pathlib import Path
+    import subprocess
+    import sys
+
+    screenshot = tmp_path / "desktop.png"
+    result = subprocess.run(
+        [sys.executable, "run.py", "--smoke-ui", str(screenshot)],
+        cwd=Path(__file__).resolve().parents[1],
+        env={**os.environ, "QT_QPA_PLATFORM": "offscreen", "VIDEOBOT_HOME": str(tmp_path / "data")},
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert result.returncode == 0, result.stderr
+    assert screenshot.stat().st_size > 1000
