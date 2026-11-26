@@ -1,362 +1,690 @@
-import os
+"""VideoBot desktop: inspect, select, queue, recover."""
+
+import json
 import sys
+from dataclasses import asdict
+from pathlib import Path
 
-from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QWidget,
-    QVBoxLayout, QHBoxLayout,
-    QLabel, QLineEdit, QPushButton,
-    QTextEdit, QProgressBar,
-    QSpinBox, QComboBox, QFileDialog, QFrame,
+from PySide6.QtCore import Qt, QTimer, QUrl
+from shiboken6 import delete
+from PySide6.QtGui import QDesktopServices, QImageReader, QPixmap
+from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest
+from PySide6.QtWidgets import (
+    QApplication,
+    QCheckBox,
+    QComboBox,
+    QDoubleSpinBox,
+    QFileDialog,
+    QFormLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QHeaderView,
+    QInputDialog,
+    QLabel,
+    QLineEdit,
+    QMainWindow,
+    QMessageBox,
+    QPlainTextEdit,
+    QProgressBar,
+    QPushButton,
+    QScrollArea,
+    QSpinBox,
+    QSplitter,
+    QTabWidget,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
 )
-from PyQt6.QtCore import Qt, pyqtSlot
-from PyQt6.QtGui import QFont
 
-from .worker import ScraperWorker
-
-# ── Palette ────────────────────────────────────────────────────────────────────
-BG_DEEP  = "#0f1117"
-BG_CARD  = "#1a1d27"
-BG_INPUT = "#22253a"
-ACCENT   = "#6e84f7"
-TEXT_PRI = "#e8eaf6"
-TEXT_SEC = "#8890b5"
-SUCCESS  = "#4caf82"
-WARNING  = "#f5a623"
-DANGER   = "#e57373"
+from . import __version__
+from .models import Candidate, Options
+from .runtime import configure_tool_path, diagnostics, redact
+from .storage import Store
+from .worker import TaskWorker
 
 
-def _card_style() -> str:
-    return f"QFrame {{ background: {BG_CARD}; border-radius: 8px; }}"
-
-
-class StatCard(QFrame):
-    def __init__(self, title: str, parent=None):
-        super().__init__(parent)
-        self.setStyleSheet(_card_style())
-        self.setFixedHeight(80)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 10, 16, 10)
-        layout.setSpacing(2)
-
-        lbl = QLabel(title)
-        lbl.setStyleSheet(f"color: {TEXT_SEC}; font-size: 11px;")
-
-        self._val = QLabel("0")
-        self._val.setStyleSheet(f"color: {TEXT_PRI}; font-size: 22px; font-weight: bold;")
-
-        layout.addWidget(lbl)
-        layout.addWidget(self._val)
-
-    def set_value(self, v):
-        self._val.setText(str(v))
+STYLE = """
+QWidget { background:#10131d; color:#e8edf7; font-size:13px; }
+QMainWindow, QScrollArea { background:#10131d; }
+QGroupBox { border:1px solid #323a50; border-radius:8px; margin-top:12px; padding:14px 8px 8px; font-weight:600; }
+QGroupBox::title { subcontrol-origin:margin; left:10px; }
+QPushButton { background:#29334c; border:1px solid #455270; border-radius:6px; padding:8px 13px; }
+QPushButton:hover { background:#394969; }
+QPushButton:disabled { color:#778198; background:#1e2433; }
+QPushButton#primary { background:#7657d9; color:white; border-color:#987cf0; font-weight:600; }
+QLineEdit,QPlainTextEdit,QSpinBox,QDoubleSpinBox,QComboBox,QTableWidget { background:#181e2d; border:1px solid #35405a; border-radius:4px; padding:5px; selection-background-color:#504277; }
+QHeaderView::section { background:#242c40; padding:7px; border:0; }
+QProgressBar { border:1px solid #35405a; border-radius:4px; text-align:center; }
+QProgressBar::chunk { background:#7657d9; }
+QTabBar::tab { padding:10px 18px; background:#1b2334; }
+QTabBar::tab:selected { background:#3a3157; }
+QLabel#muted { color:#a9b5ca; }
+"""
 
 
 class MainWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self, db_path=None):
         super().__init__()
-        self.setWindowTitle("VideoBot")
-        self.setMinimumSize(880, 700)
-        self._worker = None
-        self._build_ui()
-        self._apply_theme()
+        self.setWindowTitle(f"VideoBot {__version__}")
+        self.resize(1240, 860)
+        self.setMinimumSize(950, 680)
+        self._store_closed = False
+        self.store = Store(db_path)
+        self.store.recover()
+        self.worker = None
+        self.candidates = []
+        self.closing = False
+        self._thumbnail_reply = None
+        self.network = QNetworkAccessManager(self)
+        QImageReader.setAllocationLimit(32)
+        self._build()
+        self._load_options(self.store.setting("options", Options().public_dict()))
+        if self.store.setting("profiles") is None:
+            archive = Options().public_dict()
+            editing = {**archive, "container": "mp4", "editing_compatible": True}
+            audio = {**archive, "audio_only": True}
+            self.store.set_setting(
+                "profiles", {"Source archive": archive, "Editing H.264": editing, "Audio MP3": audio}
+            )
+        self._refresh_profiles()
+        self.refresh_jobs()
+        self.setStyleSheet(STYLE)
 
-    # ── UI construction ───────────────────────────────────────────────────────
+    def button(self, text, action, primary=False):
+        button = QPushButton(text)
+        button.clicked.connect(action)
+        if primary:
+            button.setObjectName("primary")
+        return button
 
-    def _build_ui(self):
-        root = QWidget()
-        self.setCentralWidget(root)
-        outer = QVBoxLayout(root)
-        outer.setContentsMargins(22, 22, 22, 22)
-        outer.setSpacing(14)
-
-        # Title
+    def _build(self):
+        body = QWidget()
+        layout = QVBoxLayout(body)
+        layout.setContentsMargins(20, 16, 20, 16)
+        header = QHBoxLayout()
         title = QLabel("VideoBot")
-        title.setStyleSheet(f"color: {ACCENT}; font-size: 26px; font-weight: bold;")
-        outer.addWidget(title)
-
-        sub = QLabel("Smart video scraper — YouTube, Vimeo, direct MP4/WebM, and more")
-        sub.setStyleSheet(f"color: {TEXT_SEC}; font-size: 12px;")
-        outer.addWidget(sub)
-
-        # URL row
-        url_row = QHBoxLayout()
-        url_lbl = QLabel("Start URL:")
-        url_lbl.setStyleSheet(f"color: {TEXT_SEC};")
-        url_lbl.setFixedWidth(82)
-        self._url_edit = QLineEdit()
-        self._url_edit.setPlaceholderText("https://example.com/videos")
-        url_row.addWidget(url_lbl)
-        url_row.addWidget(self._url_edit)
-        outer.addLayout(url_row)
-
-        # Save directory row
-        dir_row = QHBoxLayout()
-        dir_lbl = QLabel("Save To:")
-        dir_lbl.setStyleSheet(f"color: {TEXT_SEC};")
-        dir_lbl.setFixedWidth(82)
-        self._dir_edit = QLineEdit()
-        self._dir_edit.setPlaceholderText("/path/to/save/videos")
-        self._dir_edit.setText(os.path.expanduser("~/Downloads/VideoBot"))
-        browse_btn = QPushButton("Browse…")
-        browse_btn.setFixedWidth(90)
-        browse_btn.clicked.connect(self._browse_dir)
-        dir_row.addWidget(dir_lbl)
-        dir_row.addWidget(self._dir_edit)
-        dir_row.addWidget(browse_btn)
-        outer.addLayout(dir_row)
-
-        # Options row
-        opt_row = QHBoxLayout()
-        opt_row.setSpacing(12)
-
-        qual_lbl = QLabel("Quality:")
-        qual_lbl.setStyleSheet(f"color: {TEXT_SEC};")
-        self._quality_combo = QComboBox()
-        self._quality_combo.addItems(["Best", "1080p", "720p", "480p", "Worst"])
-        self._quality_combo.setFixedWidth(115)
-
-        fmt_lbl = QLabel("Format:")
-        fmt_lbl.setStyleSheet(f"color: {TEXT_SEC};")
-        self._fmt_combo = QComboBox()
-        self._fmt_combo.addItems(["MP4 Preferred", "WebM Preferred", "Any"])
-        self._fmt_combo.setFixedWidth(145)
-
-        mp_lbl = QLabel("Max Pages:")
-        mp_lbl.setStyleSheet(f"color: {TEXT_SEC};")
-        self._max_pages = QSpinBox()
-        self._max_pages.setRange(0, 99999)
-        self._max_pages.setValue(0)
-        self._max_pages.setSpecialValueText("\u221e Unlimited")
-        self._max_pages.setFixedWidth(125)
-
-        opt_row.addWidget(qual_lbl)
-        opt_row.addWidget(self._quality_combo)
-        opt_row.addSpacing(8)
-        opt_row.addWidget(fmt_lbl)
-        opt_row.addWidget(self._fmt_combo)
-        opt_row.addSpacing(8)
-        opt_row.addWidget(mp_lbl)
-        opt_row.addWidget(self._max_pages)
-        opt_row.addStretch()
-        outer.addLayout(opt_row)
-
-        # Start / Stop
-        btn_row = QHBoxLayout()
-        self._start_btn = QPushButton("\u25b6  Start Scraping")
-        self._start_btn.setFixedHeight(38)
-        self._start_btn.clicked.connect(self._start)
-
-        self._stop_btn = QPushButton("\u25a0  Stop")
-        self._stop_btn.setFixedHeight(38)
-        self._stop_btn.setFixedWidth(120)
-        self._stop_btn.setEnabled(False)
-        self._stop_btn.clicked.connect(self._stop)
-
-        btn_row.addWidget(self._start_btn)
-        btn_row.addWidget(self._stop_btn)
-        outer.addLayout(btn_row)
-
-        # Progress bar
-        self._progress = QProgressBar()
-        self._progress.setRange(0, 100)
-        self._progress.setValue(0)
-        self._progress.setFixedHeight(6)
-        self._progress.setTextVisible(False)
-        outer.addWidget(self._progress)
-
-        # Stat cards
-        stats_row = QHBoxLayout()
-        stats_row.setSpacing(12)
-        self._stat_pages  = StatCard("Listing Pages")
-        self._stat_items  = StatCard("Items Visited")
-        self._stat_videos = StatCard("Videos Saved")
-        for c in (self._stat_pages, self._stat_items, self._stat_videos):
-            stats_row.addWidget(c)
-        outer.addLayout(stats_row)
-
-        # Log
-        self._log_box = QTextEdit()
-        self._log_box.setReadOnly(True)
-        self._log_box.setStyleSheet(f"""
-            QTextEdit {{
-                background: {BG_CARD};
-                color: {TEXT_PRI};
-                border-radius: 6px;
-                font-family: Menlo, Consolas, monospace;
-                font-size: 12px;
-                padding: 8px;
-            }}
-        """)
-        outer.addWidget(self._log_box)
-
-    def _apply_theme(self):
-        self.setStyleSheet(f"""
-            QMainWindow, QWidget {{
-                background: {BG_DEEP};
-                color: {TEXT_PRI};
-                font-size: 13px;
-            }}
-            QLineEdit, QComboBox, QSpinBox {{
-                background: {BG_INPUT};
-                color: {TEXT_PRI};
-                border: 1px solid #2e3250;
-                border-radius: 5px;
-                padding: 5px 10px;
-                font-size: 13px;
-            }}
-            QLineEdit:focus, QComboBox:focus, QSpinBox:focus {{
-                border-color: {ACCENT};
-            }}
-            QPushButton {{
-                background: {ACCENT};
-                color: white;
-                border: none;
-                border-radius: 5px;
-                padding: 8px 20px;
-                font-size: 13px;
-                font-weight: bold;
-            }}
-            QPushButton:hover    {{ background: #8095f8; }}
-            QPushButton:disabled {{ background: #2e3250; color: {TEXT_SEC}; }}
-            QProgressBar {{
-                background: {BG_CARD};
-                border-radius: 3px;
-            }}
-            QProgressBar::chunk {{
-                background: {ACCENT};
-                border-radius: 3px;
-            }}
-            QComboBox::drop-down {{ border: none; }}
-            QComboBox::down-arrow {{
-                image: none;
-                border-left: 4px solid transparent;
-                border-right: 4px solid transparent;
-                border-top: 5px solid {TEXT_SEC};
-                margin-right: 8px;
-            }}
-            QComboBox QAbstractItemView {{
-                background: {BG_INPUT};
-                color: {TEXT_PRI};
-                selection-background-color: {ACCENT};
-            }}
-            QSpinBox::up-button, QSpinBox::down-button {{ background: transparent; }}
-        """)
-
-    # ── Slots ─────────────────────────────────────────────────────────────────
-
-    @pyqtSlot()
-    def _browse_dir(self):
-        d = QFileDialog.getExistingDirectory(
-            self, "Select Save Directory", self._dir_edit.text()
+        title.setStyleSheet("font-size:28px;font-weight:700")
+        header.addWidget(title)
+        header.addWidget(QLabel("Discover. Choose. Preserve."))
+        header.addStretch()
+        header.addWidget(self.button("Diagnostics", self.show_diagnostics))
+        header.addWidget(
+            self.button(
+                "Help", lambda: QDesktopServices.openUrl(QUrl("https://github.com/ShadowfetchStudio/videobot#readme"))
+            )
         )
-        if d:
-            self._dir_edit.setText(d)
+        layout.addLayout(header)
+        splitter = QSplitter()
+        splitter.setOrientation(Qt.Orientation.Horizontal)
+        left = QWidget()
+        left_layout = QVBoxLayout(left)
+        left_layout.setContentsMargins(0, 0, 10, 0)
+        self.tabs = QTabWidget()
+        discover = QWidget()
+        d = QVBoxLayout(discover)
+        self.urls = QPlainTextEdit()
+        self.urls.setPlaceholderText("Paste video, playlist, channel or gallery URLs — one per line")
+        self.urls.setMaximumHeight(105)
+        d.addWidget(self.urls)
+        toolbar = QHBoxLayout()
+        self.inspect_btn = self.button("Inspect URLs", self.inspect, True)
+        toolbar.addWidget(self.inspect_btn)
+        toolbar.addWidget(self.button("Import URL file", self.import_urls))
+        toolbar.addWidget(self.button("Select all", lambda: self.select_all(True)))
+        toolbar.addWidget(self.button("Select none", lambda: self.select_all(False)))
+        d.addLayout(toolbar)
+        self.preview = QTableWidget(0, 5)
+        self.preview.setHorizontalHeaderLabels(["Save", "Title / source", "Duration", "Available formats", "Creator"])
+        self.preview.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.preview.setColumnWidth(0, 55)
+        self.preview.setColumnWidth(2, 75)
+        self.preview.setColumnWidth(3, 145)
+        self.preview.setColumnWidth(4, 120)
+        self.preview.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.preview.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.preview.itemSelectionChanged.connect(self.preview_selected)
+        d.addWidget(self.preview)
+        detail = QHBoxLayout()
+        self.thumb = QLabel("Thumbnail")
+        self.thumb.setFixedSize(160, 90)
+        self.thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.details = QLabel("Inspect first, then choose the items to queue.")
+        self.details.setWordWrap(True)
+        self.details.setTextFormat(Qt.TextFormat.PlainText)
+        detail.addWidget(self.thumb)
+        detail.addWidget(self.details, 1)
+        d.addLayout(detail)
+        self.queue_btn = self.button("Queue selected videos", self.queue_selected, True)
+        d.addWidget(self.queue_btn)
+        self.tabs.addTab(discover, "Discover")
+        queue = QWidget()
+        q = QVBoxLayout(queue)
+        self.jobs = QTableWidget(0, 5)
+        self.jobs.setHorizontalHeaderLabels(["Title", "Status", "Attempts", "Output / error", "ID"])
+        self.jobs.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.jobs.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        self.jobs.setColumnHidden(4, True)
+        self.jobs.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.jobs.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        q.addWidget(self.jobs)
+        controls = QHBoxLayout()
+        self.run_btn = self.button("Run queue", self.run_queue, True)
+        controls.addWidget(self.run_btn)
+        controls.addWidget(self.button("Retry selected", self.retry_selected))
+        controls.addWidget(self.button("Open output", self.open_output))
+        controls.addWidget(self.button("Remove records", self.remove_selected))
+        controls.addWidget(self.button("Export manifest", self.export_manifest))
+        q.addLayout(controls)
+        self.tabs.addTab(queue, "Queue && history")
+        left_layout.addWidget(self.tabs)
+        self.status = QLabel("Ready")
+        self.status.setTextFormat(Qt.TextFormat.PlainText)
+        left_layout.addWidget(self.status)
+        progress = QHBoxLayout()
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 100)
+        progress.addWidget(self.progress)
+        self.stop_btn = self.button("Stop / pause", self.stop)
+        self.stop_btn.setEnabled(False)
+        progress.addWidget(self.stop_btn)
+        left_layout.addLayout(progress)
+        self.log = QPlainTextEdit()
+        self.log.setReadOnly(True)
+        self.log.setMaximumBlockCount(1200)
+        self.log.setMaximumHeight(140)
+        left_layout.addWidget(self.log)
+        splitter.addWidget(left)
+        options_area = QScrollArea()
+        options_area.setWidgetResizable(True)
+        options_area.setMinimumWidth(310)
+        options_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        right = QWidget()
+        r = QVBoxLayout(right)
+        r.setContentsMargins(5, 5, 5, 5)
+        profiles = QHBoxLayout()
+        self.profile = QComboBox()
+        self.profile.setPlaceholderText("Saved profiles")
+        profiles.addWidget(self.profile, 1)
+        profiles.addWidget(self.button("Load", self.load_profile))
+        profiles.addWidget(self.button("Save", self.save_profile))
+        r.addLayout(profiles)
+        group = QGroupBox("Output")
+        form = QFormLayout(group)
+        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        self.destination = QLineEdit()
+        browse = QHBoxLayout()
+        browse.addWidget(self.destination)
+        browse.addWidget(self.button("…", self.browse_destination))
+        form.addRow("Folder", browse)
+        self.quality = QComboBox()
+        self.quality.addItems(["best", "2160", "1080", "720", "480", "360", "worst"])
+        form.addRow("Max resolution", self.quality)
+        self.container = QComboBox()
+        self.container.addItems(["native", "mp4", "webm"])
+        form.addRow("Container", self.container)
+        self.audio = QCheckBox("Audio only (MP3)")
+        form.addRow(self.audio)
+        self.editing = QCheckBox("Editing-compatible H.264/AAC")
+        form.addRow(self.editing)
+        note = QLabel(
+            "Editing mode transcodes video: slower, with a new encoding. Each job gets its own folder and provenance manifest."
+        )
+        note.setWordWrap(True)
+        note.setObjectName("muted")
+        form.addRow(note)
+        self.subtitles = QLineEdit()
+        self.subtitles.setPlaceholderText("en,es or all")
+        form.addRow("Subtitle languages", self.subtitles)
+        self.auto_subs = QCheckBox("Include automatic captions")
+        form.addRow(self.auto_subs)
+        self.thumbnail = QCheckBox("Save thumbnail")
+        form.addRow(self.thumbnail)
+        self.metadata = QCheckBox("Embed metadata")
+        self.metadata.setChecked(True)
+        form.addRow(self.metadata)
+        self.segment = QCheckBox("Download a time range")
+        form.addRow(self.segment)
+        self.start_time = QDoubleSpinBox()
+        self.end_time = QDoubleSpinBox()
+        for widget in (self.start_time, self.end_time):
+            widget.setRange(0, 864000)
+            widget.setSuffix(" s")
+        form.addRow("Start", self.start_time)
+        form.addRow("End", self.end_time)
+        self.rights = QLineEdit()
+        form.addRow("Rights notes", self.rights)
+        r.addWidget(group)
+        limits = QGroupBox("Limits")
+        f = QFormLayout(limits)
+        f.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+        self.pages = QSpinBox()
+        self.pages.setRange(1, 10000)
+        f.addRow("Page budget", self.pages)
+        self.items = QSpinBox()
+        self.items.setRange(1, 100000)
+        f.addRow("Item budget", self.items)
+        self.size = QDoubleSpinBox()
+        self.size.setRange(0.01, 10000)
+        self.size.setSuffix(" GiB")
+        f.addRow("Maximum job size", self.size)
+        self.reserve = QDoubleSpinBox()
+        self.reserve.setRange(0, 10000)
+        self.reserve.setSuffix(" GiB")
+        f.addRow("Free-space reserve", self.reserve)
+        self.retries = QSpinBox()
+        self.retries.setRange(0, 10)
+        f.addRow("Transfer retries", self.retries)
+        self.delay = QDoubleSpinBox()
+        self.delay.setRange(5, 3600)
+        self.delay.setSuffix(" s")
+        f.addRow("Success cooldown", self.delay)
+        r.addWidget(limits)
+        auth = QGroupBox("Authentication · this session only")
+        f = QFormLayout(auth)
+        f.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+        self.cookie_browser = QComboBox()
+        self.cookie_browser.addItems(["", "chrome", "chromium", "firefox", "edge", "brave", "safari"])
+        f.addRow("Use browser cookies", self.cookie_browser)
+        self.cookie_file = QLineEdit()
+        row = QHBoxLayout()
+        row.addWidget(self.cookie_file)
+        row.addWidget(self.button("…", self.browse_cookies))
+        f.addRow("Or cookie file", row)
+        note = QLabel(
+            "Choose an account only when needed. Cookies are not saved in profiles or exported manifests. Browser access may prompt for OS permission."
+        )
+        note.setWordWrap(True)
+        note.setObjectName("muted")
+        f.addRow(note)
+        r.addWidget(auth)
+        r.addStretch()
+        options_area.setWidget(right)
+        splitter.addWidget(options_area)
+        splitter.setSizes([850, 330])
+        layout.addWidget(splitter)
+        self.setCentralWidget(body)
 
-    @pyqtSlot()
-    def _start(self):
-        url = self._url_edit.text().strip()
-        if not url:
-            self._append(f"<span style='color:{WARNING};'>Please enter a Start URL.</span>")
+    def options(self):
+        return Options(
+            destination=self.destination.text(),
+            quality=self.quality.currentText(),
+            container=self.container.currentText(),
+            audio_only=self.audio.isChecked(),
+            subtitles=self.subtitles.text(),
+            automatic_subtitles=self.auto_subs.isChecked(),
+            thumbnail=self.thumbnail.isChecked(),
+            embed_metadata=self.metadata.isChecked(),
+            editing_compatible=self.editing.isChecked(),
+            segment_start=self.start_time.value() if self.segment.isChecked() else None,
+            segment_end=self.end_time.value() if self.segment.isChecked() else None,
+            max_pages=self.pages.value(),
+            max_items=self.items.value(),
+            max_bytes=int(self.size.value() * 1024**3),
+            min_free_bytes=int(self.reserve.value() * 1024**3),
+            retries=self.retries.value(),
+            cooldown=self.delay.value(),
+            cookie_file=self.cookie_file.text(),
+            cookie_browser=self.cookie_browser.currentText(),
+            rights_notes=self.rights.text(),
+        ).validate()
+
+    def _load_options(self, data):
+        o = Options(**{k: v for k, v in data.items() if k in Options.__dataclass_fields__})
+        self.destination.setText(o.destination)
+        self.quality.setCurrentText(o.quality)
+        self.container.setCurrentText(o.container)
+        self.audio.setChecked(o.audio_only)
+        self.subtitles.setText(o.subtitles)
+        self.auto_subs.setChecked(o.automatic_subtitles)
+        self.thumbnail.setChecked(o.thumbnail)
+        self.metadata.setChecked(o.embed_metadata)
+        self.editing.setChecked(o.editing_compatible)
+        self.segment.setChecked(o.segment_start is not None)
+        self.start_time.setValue(o.segment_start or 0)
+        self.end_time.setValue(o.segment_end or 0)
+        self.pages.setValue(o.max_pages)
+        self.items.setValue(o.max_items)
+        self.size.setValue(o.max_bytes / 1024**3)
+        self.reserve.setValue(o.min_free_bytes / 1024**3)
+        self.retries.setValue(o.retries)
+        self.delay.setValue(o.cooldown)
+        self.rights.setText(o.rights_notes)
+
+    def _error(self, exc):
+        self.log.appendPlainText(redact(exc))
+        QMessageBox.warning(self, "VideoBot", redact(exc))
+
+    def browse_destination(self):
+        path = QFileDialog.getExistingDirectory(self, "Save media to", self.destination.text())
+        if path:
+            self.destination.setText(path)
+
+    def browse_cookies(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Choose a Netscape-format cookie file")
+        if path:
+            self.cookie_file.setText(path)
+            self.cookie_browser.setCurrentIndex(0)
+
+    def import_urls(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Import URLs", filter="Text files (*.txt);;All files (*)")
+        if path:
+            try:
+                if Path(path).stat().st_size > 1024 * 1024:
+                    raise ValueError("URL file is too large (maximum 1 MiB).")
+                self.urls.setPlainText(Path(path).read_text(encoding="utf-8"))
+            except Exception as exc:
+                self._error(exc)
+
+    def start_task(self, request):
+        if self.worker and self.worker.isRunning():
             return
-        if not url.startswith(("http://", "https://")):
-            url = "https://" + url
-            self._url_edit.setText(url)
+        self.progress.setRange(0, 0)
+        self.stop_btn.setEnabled(True)
+        self.run_btn.setEnabled(False)
+        self.inspect_btn.setEnabled(False)
+        self.worker = TaskWorker(request, self)
+        self.worker.event.connect(self.on_event)
+        self.worker.finished.connect(self.task_finished)
+        self.worker.start()
 
-        save_dir = self._dir_edit.text().strip() or os.path.expanduser("~/Downloads/VideoBot")
+    def inspect(self):
+        try:
+            urls = [line.strip() for line in self.urls.toPlainText().splitlines() if line.strip()]
+            if not urls:
+                raise ValueError("Paste at least one URL.")
+            options = self.options()
+            self.store.set_setting("options", options.public_dict())
+            self.candidates = []
+            self.preview.setRowCount(0)
+            self.status.setText("Inspecting sources…")
+            self.start_task({"action": "inspect", "urls": urls, "options": asdict(options)})
+        except Exception as exc:
+            self._error(exc)
 
-        quality_map = {
-            "Best": "best", "1080p": "1080p", "720p": "720p",
-            "480p": "480p", "Worst": "worst",
-        }
-        fmt_map = {
-            "MP4 Preferred": "mp4", "WebM Preferred": "webm", "Any": "any",
-        }
-        quality   = quality_map.get(self._quality_combo.currentText(), "best")
-        fmt       = fmt_map.get(self._fmt_combo.currentText(), "any")
-        max_pages = self._max_pages.value()
-
-        # Reset UI
-        self._stat_pages.set_value(0)
-        self._stat_items.set_value(0)
-        self._stat_videos.set_value(0)
-        self._progress.setValue(0)
-        self._log_box.clear()
-        self._append(f"<span style='color:{ACCENT};'>Starting VideoBot…</span>")
-        self._append(f"URL: {url}")
-        self._append(f"Save to: {save_dir}")
-        inf = "\u221e" if max_pages == 0 else str(max_pages)
-        self._append(f"Quality: {quality}  |  Format: {fmt}  |  Max pages: {inf}")
-
-        self._start_btn.setEnabled(False)
-        self._stop_btn.setEnabled(True)
-
-        self._worker = ScraperWorker(url, save_dir, quality, fmt, max_pages)
-        self._worker.log_signal.connect(self._on_log)
-        self._worker.progress_signal.connect(self._on_progress)
-        self._worker.page_signal.connect(self._on_page)
-        self._worker.items_signal.connect(self._on_items)
-        self._worker.done_signal.connect(self._on_done)
-        self._worker.error_signal.connect(self._on_error)
-        self._worker.start()
-
-    @pyqtSlot()
-    def _stop(self):
-        if self._worker:
-            self._worker.stop()
-        self._stop_btn.setEnabled(False)
-        self._append(f"<span style='color:{WARNING};'>Stop requested…</span>")
-
-    @pyqtSlot(str)
-    def _on_log(self, msg: str):
-        self._append(msg)
-
-    @pyqtSlot(int)
-    def _on_progress(self, pct: int):
-        self._progress.setValue(pct)
-
-    @pyqtSlot(int)
-    def _on_page(self, pages_done: int):
-        self._stat_pages.set_value(pages_done)
-
-    @pyqtSlot(int, int)
-    def _on_items(self, items_visited: int, videos_saved: int):
-        self._stat_items.set_value(items_visited)
-        self._stat_videos.set_value(videos_saved)
-
-    @pyqtSlot(dict)
-    def _on_done(self, result: dict):
-        self._stat_pages.set_value(result.get("pages", 0))
-        self._stat_items.set_value(result.get("items", 0))
-        self._stat_videos.set_value(result.get("videos", 0))
-        self._append(
-            f"<span style='color:{SUCCESS};'>"
-            f"Done! Pages: {result.get('pages', 0)} | "
-            f"Items: {result.get('items', 0)} | "
-            f"Videos: {result.get('videos', 0)}"
-            f"</span>"
+    def add_candidate(self, data):
+        candidate = Candidate(**data)
+        self.candidates.append(candidate)
+        row = self.preview.rowCount()
+        self.preview.insertRow(row)
+        check = QTableWidgetItem()
+        check.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable)
+        check.setCheckState(Qt.CheckState.Checked)
+        self.preview.setItem(row, 0, check)
+        formats = (
+            ", ".join(sorted({f"{f.get('height') or 'audio'} {f.get('ext') or ''}" for f in candidate.formats}))
+            or "Resolved at download"
         )
-        self._progress.setValue(100)
-        self._start_btn.setEnabled(True)
-        self._stop_btn.setEnabled(False)
+        values = [
+            candidate.title or redact(candidate.url),
+            f"{candidate.duration:.0f}s" if candidate.duration else "Unknown",
+            formats,
+            candidate.creator,
+        ]
+        for col, value in enumerate(values, 1):
+            self.preview.setItem(row, col, QTableWidgetItem(value))
 
-    @pyqtSlot(str)
-    def _on_error(self, msg: str):
-        self._append(f"<span style='color:{DANGER};'>Error: {msg}</span>")
-        self._start_btn.setEnabled(True)
-        self._stop_btn.setEnabled(False)
+    def select_all(self, selected):
+        for row in range(self.preview.rowCount()):
+            self.preview.item(row, 0).setCheckState(Qt.CheckState.Checked if selected else Qt.CheckState.Unchecked)
 
-    # ── Internal ──────────────────────────────────────────────────────────────
+    def preview_selected(self):
+        row = self.preview.currentRow()
+        if not 0 <= row < len(self.candidates):
+            return
+        candidate = self.candidates[row]
+        self.details.setText(f"{candidate.title}\n{redact(candidate.url)}")
+        self.thumb.clear()
+        self.thumb.setText("No thumbnail")
+        if self._thumbnail_reply:
+            self._thumbnail_reply.abort()
+        if not candidate.thumbnail.startswith(("https://", "http://")):
+            return
+        request = QNetworkRequest(QUrl(candidate.thumbnail))
+        request.setTransferTimeout(8000)
+        reply = self.network.get(request)
+        self._thumbnail_reply = reply
+        reply.downloadProgress.connect(
+            lambda done, total: reply.abort() if done > 2 * 1024 * 1024 or total > 2 * 1024 * 1024 else None
+        )
 
-    def _append(self, html: str):
-        self._log_box.append(html)
-        sb = self._log_box.verticalScrollBar()
-        sb.setValue(sb.maximum())
+        def loaded():
+            if self._thumbnail_reply is reply and self.preview.currentRow() == row:
+                data = reply.readAll()
+                pixmap = QPixmap()
+                if len(data) <= 2 * 1024 * 1024 and pixmap.loadFromData(data):
+                    self.thumb.setPixmap(
+                        pixmap.scaled(
+                            160, 90, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+                        )
+                    )
+                self._thumbnail_reply = None
+            reply.deleteLater()
+
+        reply.finished.connect(loaded)
+
+    def queue_selected(self):
+        try:
+            options = self.options()
+            added = 0
+            duplicates = 0
+            for row, candidate in enumerate(self.candidates):
+                if self.preview.item(row, 0).checkState() == Qt.CheckState.Checked:
+                    _, new = self.store.add(candidate, options)
+                    added += new
+                    duplicates += not new
+            self.store.set_setting("options", options.public_dict())
+            self.refresh_jobs()
+            self.tabs.setCurrentIndex(1)
+            self.status.setText(
+                f"Queued {added}; already in queue/history: {duplicates}. Authentication selections apply when you run the queue."
+            )
+        except Exception as exc:
+            self._error(exc)
+
+    def run_queue(self):
+        try:
+            # Queued jobs already have validated output policies. Only current
+            # session authentication applies when running them.
+            options = Options(
+                cookie_file=self.cookie_file.text(), cookie_browser=self.cookie_browser.currentText()
+            ).validate()
+            self.start_task(
+                {
+                    "action": "run",
+                    "db": str(self.store.path),
+                    "auth": {"cookie_file": options.cookie_file, "cookie_browser": options.cookie_browser},
+                }
+            )
+        except Exception as exc:
+            self._error(exc)
+
+    def selected_ids(self):
+        return [self.jobs.item(row, 4).text() for row in sorted({i.row() for i in self.jobs.selectedIndexes()})]
+
+    def refresh_jobs(self):
+        self.rows = self.store.rows()
+        selected = set(self.selected_ids()) if self.jobs.rowCount() else set()
+        self.jobs.setRowCount(len(self.rows))
+        for row, job in enumerate(self.rows):
+            values = [
+                job["candidate"]["title"] or redact(job["candidate"]["url"]),
+                job["status"],
+                str(job["attempts"]),
+                job["error"] or job["output"],
+                job["id"],
+            ]
+            for col, value in enumerate(values):
+                self.jobs.setItem(row, col, QTableWidgetItem(value))
+            if job["id"] in selected:
+                self.jobs.selectRow(row)
+
+    def retry_selected(self):
+        self.store.retry(self.selected_ids())
+        self.refresh_jobs()
+
+    def remove_selected(self):
+        self.store.remove(self.selected_ids())
+        self.refresh_jobs()
+
+    def open_output(self):
+        ids = set(self.selected_ids())
+        for job in self.rows:
+            if job["id"] in ids and job["output"] and Path(job["output"]).is_dir():
+                QDesktopServices.openUrl(QUrl.fromLocalFile(job["output"]))
+                return
+        self.status.setText("Select a completed job with an existing output folder.")
+
+    def export_manifest(self):
+        path, _ = QFileDialog.getSaveFileName(self, "Export library manifest", "videobot-library.json", "JSON (*.json)")
+        if not path:
+            return
+        try:
+            entries = []
+            for row in self.store.rows():
+                manifest = Path(row["output"]) / "manifest.json" if row["output"] else None
+                if manifest and manifest.is_file():
+                    entries.append(json.loads(manifest.read_text(encoding="utf-8")))
+            Path(path).write_text(
+                json.dumps({"schema": 1, "items": entries}, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+            )
+            self.status.setText(f"Exported {len(entries)} completed items.")
+        except Exception as exc:
+            self._error(exc)
+
+    def on_event(self, event):
+        kind = event["type"]
+        if kind == "candidate":
+            self.add_candidate(event["candidate"])
+        elif kind == "log":
+            self.log.appendPlainText(event.get("message", ""))
+        elif kind == "progress":
+            percent = event.get("percent")
+            self.progress.setRange(0, 100 if percent is not None else 0)
+            if percent is not None:
+                self.progress.setValue(int(percent))
+            speed = event.get("speed")
+            eta = event.get("eta")
+            self.status.setText(
+                f"{event.get('phase', 'Downloading')} · {speed / 1024**2:.1f} MiB/s · ETA {eta:.0f}s"
+                if speed and eta is not None
+                else event.get("phase", "Downloading")
+            )
+        elif kind == "phase":
+            self.status.setText(event.get("phase", "Working").capitalize())
+        elif kind == "job":
+            self.refresh_jobs()
+        elif kind in ("result", "error"):
+            status = event.get("status", "failed")
+            self.progress.setRange(0, 100)
+            self.progress.setValue(100 if status == "completed" else 0)
+            summary = (
+                f"{status.capitalize()}: {event.get('count', event.get('completed', 0))} item(s) completed/discovered"
+            )
+            if event.get("failed"):
+                summary += f"; {event['failed']} failed"
+            self.status.setText(event.get("message") or summary)
+            self.log.appendPlainText(self.status.text())
+            self.refresh_jobs()
+
+    def stop(self):
+        if self.worker:
+            self.worker.stop()
+        self.stop_btn.setEnabled(False)
+        self.status.setText("Stopping safely… unfinished jobs can be retried.")
+
+    def task_finished(self):
+        finished = self.worker
+        self.worker = None
+        if finished:
+            finished.deleteLater()
+        self.run_btn.setEnabled(True)
+        self.inspect_btn.setEnabled(True)
+        self.stop_btn.setEnabled(False)
+        self.refresh_jobs()
+        if self.closing:
+            QTimer.singleShot(0, self.close)
+
+    def show_diagnostics(self):
+        try:
+            report = diagnostics()
+            self.log.appendPlainText(json.dumps(report, indent=2))
+            missing = [name for name in ("ffmpeg", "ffprobe") if not report["tools"].get(name)]
+            if missing:
+                self.status.setText("Missing " + ", ".join(missing) + ". See Help → installation.")
+            else:
+                self.status.setText("Core media tools found. See log for browser/YouTube dependencies.")
+        except Exception as exc:
+            self._error(exc)
+
+    def _refresh_profiles(self):
+        self.profile.clear()
+        self.profile.addItems(sorted(self.store.setting("profiles", {})))
+        self.profile.setCurrentIndex(-1)
+
+    def load_profile(self):
+        data = self.store.setting("profiles", {}).get(self.profile.currentText())
+        if data:
+            self._load_options(data)
+
+    def save_profile(self):
+        try:
+            options = self.options()
+            name, ok = QInputDialog.getText(self, "Save profile", "Profile name")
+            if ok and name.strip():
+                profiles = self.store.setting("profiles", {})
+                profiles[name.strip()] = options.public_dict()
+                self.store.set_setting("profiles", profiles)
+                self._refresh_profiles()
+        except Exception as exc:
+            self._error(exc)
+
+    def closeEvent(self, event):
+        if self._store_closed:
+            event.accept()
+            return
+        if self.worker and self.worker.isRunning():
+            self.closing = True
+            self.stop()
+            event.ignore()
+            return
+        if self._thumbnail_reply:
+            self._thumbnail_reply.abort()
+        try:
+            self.store.set_setting("options", self.options().public_dict())
+        except ValueError:
+            pass
+        self.store.close()
+        self._store_closed = True
+        event.accept()
 
 
 def main():
-    app = QApplication(sys.argv)
-    app.setFont(QFont(".AppleSystemUIFont", 13))
-    win = MainWindow()
-    win.show()
-    sys.exit(app.exec())
+    configure_tool_path()
+    if len(sys.argv) > 2 and sys.argv[1] == "--worker-task":
+        from .cli import main as cli_main
+
+        return cli_main(["_task", sys.argv[2]])
+    smoke_image = sys.argv[2] if len(sys.argv) > 2 and sys.argv[1] == "--smoke-ui" else None
+    app = QApplication(sys.argv[:1] if smoke_image else sys.argv)
+    app.setApplicationName("VideoBot")
+    app.setOrganizationName("ShadowfetchStudio")
+    window = MainWindow()
+    window.show()
+    if smoke_image:
+
+        def capture():
+            window.grab().save(smoke_image)
+            window.close()
+
+        QTimer.singleShot(300, capture)
+    result = app.exec()
+    # Destroy widgets while QApplication and the Python bindings are still alive.
+    # Frozen Linux/Windows builds otherwise crash in PySide atexit cleanup.
+    delete(window)
+    return result
+
+
+if __name__ == "__main__":
+    sys.exit(main())
