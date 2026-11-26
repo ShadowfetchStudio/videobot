@@ -2,6 +2,7 @@
 
 import importlib.metadata
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -10,6 +11,23 @@ import threading
 import time
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
+
+
+def configure_tool_path():
+    """Finder does not inherit shell profiles; find standard user-installed tools."""
+    if sys.platform != "darwin":
+        return
+    entries = [entry for entry in os.environ.get("PATH", "").split(os.pathsep) if entry]
+    for directory in (
+        Path("/opt/homebrew/bin"),
+        Path("/usr/local/bin"),
+        Path.home() / ".local/bin",
+        Path.home() / ".deno/bin",
+    ):
+        value = str(directory)
+        if directory.is_dir() and value not in entries:
+            entries.append(value)
+    os.environ["PATH"] = os.pathsep.join(entries)
 
 
 class Cancelled(Exception):

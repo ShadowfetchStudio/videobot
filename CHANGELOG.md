@@ -14,6 +14,7 @@
 - Add local regression/integration fixtures, platform CI, packaging workflows and updated documentation.
 - Fix native desktop shutdown ordering on Linux/Windows and test the real executable through GUI startup, browser inspection and native downloads.
 - Redact entire authorization/cookie values, including multi-word Bearer credentials and multiple cookies.
+- Find standard Homebrew/user tools when launched from macOS Finder; package acceptance uses a Finder-style PATH.
 - Pin current GitHub Actions by commit and bound CI job time.
 
 Release status and validation limits are recorded in docs/RELEASE-AUDIT.md. CI artifacts are separate from publishing a signed installer or a GitHub Release.

@@ -24,6 +24,10 @@ def executable():
 
 def main():
     binary = executable().resolve()
+    child_env = {**os.environ, "QT_QPA_PLATFORM": "offscreen"}
+    if sys.platform == "darwin":
+        # Finder launches do not inherit Homebrew/user tool paths from the shell.
+        child_env["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"
     with tempfile.TemporaryDirectory(prefix="videobot-smoke-") as temp:
         root = Path(temp)
         screenshot = root / "desktop.png"
@@ -31,7 +35,7 @@ def main():
             [str(binary), "--smoke-ui", str(screenshot)],
             check=True,
             timeout=30,
-            env={**os.environ, "QT_QPA_PLATFORM": "offscreen", "VIDEOBOT_HOME": str(root / "app-data")},
+            env={**child_env, "VIDEOBOT_HOME": str(root / "app-data")},
         )
         assert screenshot.is_file() and screenshot.stat().st_size > 1000
         web = root / "web"
@@ -74,7 +78,7 @@ def main():
                 capture_output=True,
                 text=True,
                 timeout=90,
-                env={**os.environ, "QT_QPA_PLATFORM": "offscreen"},
+                env=child_env,
             )
             text = result.stdout + (events.read_text(encoding="utf-8") if events.exists() else "")
             rows = []

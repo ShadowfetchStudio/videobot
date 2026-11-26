@@ -55,6 +55,8 @@ Install **FFmpeg and ffprobe** and put them on PATH:
 - Debian/Ubuntu: `sudo apt install ffmpeg`
 - Windows: install a trusted FFmpeg build; verify `ffmpeg -version` and `ffprobe -version` from a fresh terminal. `winget search ffmpeg` lists available packages.
 
+On macOS, the app also searches the standard Homebrew, `~/.local/bin` and `~/.deno/bin` directories when launched from Finder, preserving any existing PATH choices.
+
 Full YouTube support also needs a supported JavaScript runtime. Install [Deno](https://docs.deno.com/runtime/getting_started/installation/) or a current Node.js release. The Python installation includes `yt-dlp[default]` and its EJS dependency. VideoBot detects Deno first, then Node. See [yt-dlp's current requirements](https://github.com/yt-dlp/yt-dlp#dependencies).
 
 ```sh

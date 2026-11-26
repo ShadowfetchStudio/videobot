@@ -39,7 +39,7 @@ from PySide6.QtWidgets import (
 
 from . import __version__
 from .models import Candidate, Options
-from .runtime import diagnostics, redact
+from .runtime import configure_tool_path, diagnostics, redact
 from .storage import Store
 from .worker import TaskWorker
 
@@ -661,6 +661,7 @@ class MainWindow(QMainWindow):
 
 
 def main():
+    configure_tool_path()
     if len(sys.argv) > 2 and sys.argv[1] == "--worker-task":
         from .cli import main as cli_main
 

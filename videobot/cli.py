@@ -8,7 +8,7 @@ from pathlib import Path
 
 from .engine import inspect_urls, run_queue
 from .models import Candidate, Options
-from .runtime import Cancelled, Cancellation, diagnostics, emit_stdout, redact
+from .runtime import Cancelled, Cancellation, configure_tool_path, diagnostics, emit_stdout, redact
 from .storage import Store
 
 
@@ -45,6 +45,7 @@ def task(request):
 
 
 def main(argv=None):
+    configure_tool_path()
     parser = argparse.ArgumentParser(description="VideoBot durable media queue")
     parser.add_argument("--db", help="Queue SQLite path (default: platform application-data directory)")
     sub = parser.add_subparsers(dest="command", required=True)

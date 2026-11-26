@@ -331,3 +331,19 @@ def test_redaction_removes_entire_credential_headers():
         assert "also-private" not in cleaned
         assert "[redacted]" in cleaned
         assert cleaned.endswith("next diagnostic line")
+
+
+def test_finder_tool_path_preserves_explicit_choices(monkeypatch, tmp_path):
+    import os
+    import videobot.runtime as runtime
+
+    tools = tmp_path / ".local" / "bin"
+    tools.mkdir(parents=True)
+    monkeypatch.setattr(runtime.sys, "platform", "darwin")
+    monkeypatch.setattr(runtime.Path, "home", lambda: tmp_path)
+    monkeypatch.setenv("PATH", "/chosen/bin")
+    runtime.configure_tool_path()
+    runtime.configure_tool_path()
+    entries = os.environ["PATH"].split(os.pathsep)
+    assert entries[0] == "/chosen/bin"
+    assert entries.count(str(tools)) == 1
