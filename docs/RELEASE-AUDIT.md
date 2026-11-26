@@ -2,7 +2,7 @@
 
 ## Local second audit — November 26, 2026
 
-All F01–F24 findings have implementation changes and the evidence mapped below. **34 local tests passed**, including native and direct downloads, valid small clips, HLS, WebM, editing conversion, audio/time ranges, protected local media, retry timing, disk limits, crash recovery, and supervised cancellation. Ruff and formatting checks pass. Wheel/sdist and the macOS application build succeed. A packaged browser inspection and native download passed; the final package cycle also exercises actual GUI startup.
+All F01–F24 findings have implementation changes and the evidence mapped below. **35 local tests passed**, including native and direct downloads, valid small clips, HLS, WebM, editing conversion, audio/time ranges, protected local media, retry timing, disk limits, crash recovery, and supervised cancellation. Ruff and formatting checks pass. Wheel/sdist and the macOS application build succeed. A packaged browser inspection and native download passed; the final package cycle also exercises actual GUI startup.
 
 The audit found and fixed additional issues: repeated window-close handling; WAV extension selection during audio clipping; PID reuse during recovery; Unicode file I/O on Windows; process children surviving root termination; GUI thread cleanup; partial authentication/session propagation; and Chromium bundle signing/layout. yt-dlp extraction/postprocessing now runs in a separately supervised process so cancellation and resource checks apply through FFmpeg operations, including the CLI.
 
@@ -61,5 +61,5 @@ Install FFmpeg/ffprobe first. On Windows, use the shell's environment-variable s
 | F20 HTML/unbounded logs | QPlainTextEdit + 1,200 block cap + redaction | desktop/log tests |
 | F21 setup drift | Python baseline, EJS/runtime detection, doctor, lock | local doctor + dependency audit |
 | F22 packaging | PyInstaller + platform package workflow | macOS packaged browser/native transfer smoke; platform CI gate below |
-| F23 no tests/CI | pytest fixture suite + multi-platform workflow | 34 local tests; platform CI gate below |
+| F23 no tests/CI | pytest fixture suite + multi-platform workflow | 35 local tests; platform CI gate below |
 | F24 resources/retries | byte/free-space guards, bounded retry and cooldown | byte/reserve limits, Retry-After and response cleanup tests; supervised FFmpeg guard |

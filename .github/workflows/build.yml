@@ -35,6 +35,17 @@ jobs:
       - run: python scripts/build.py
       - name: Exercise packaged browser and native download
         run: python scripts/package_smoke.py
+      - name: Diagnose Linux packaged startup failure
+        if: failure() && runner.os == 'Linux'
+        run: |
+          sudo apt-get update && sudo apt-get install -y gdb
+          QT_QPA_PLATFORM=offscreen QT_DEBUG_PLUGINS=1 gdb -batch -ex run -ex 'thread apply all bt' --args dist/VideoBot/VideoBot --smoke-ui /tmp/videobot-debug.png > package-debug.log 2>&1 || true
+          tail -100 package-debug.log
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: package-debug-${{ matrix.os }}
+          path: package-debug.log
       - name: Windows installer
         if: runner.os == 'Windows'
         shell: pwsh

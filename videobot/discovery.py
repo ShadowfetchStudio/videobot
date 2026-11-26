@@ -71,6 +71,11 @@ SCAN = r"""() => {
 }"""
 
 
+def origin_key(url):
+    parsed = urlsplit(url)
+    return parsed.scheme, parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80)
+
+
 def is_native(url):
     return any(cls.IE_NAME != "generic" and cls.suitable(url) for cls in gen_extractor_classes())
 
@@ -201,7 +206,7 @@ class Discovery:
                 pending = [url]
                 visited = set()
                 pages = 0
-                origin = urlsplit(url).netloc
+                origin = origin_key(url)
                 while pending and pages < self.options.max_pages and len(self.items) < self.options.max_items:
                     self.cancel.check()
                     current = normalize_url(pending.pop(0))
@@ -215,7 +220,7 @@ class Discovery:
                     response = page.goto(current, wait_until="domcontentloaded", timeout=15000)
                     if response and response.status >= 400:
                         raise RuntimeError(f"Listing returned HTTP {response.status}")
-                    if urlsplit(page.url).netloc != origin:
+                    if origin_key(page.url) != origin:
                         self.emit(
                             "log", level="warning", message="Skipped navigation redirect outside the collection domain."
                         )
@@ -252,7 +257,7 @@ class Discovery:
                                 if target not in visited and target not in pending:
                                     pending.append(target)
                         next_url = data["next"]
-                        if next_url and urlsplit(urljoin(current, next_url)).netloc == origin:
+                        if next_url and origin_key(urljoin(current, next_url)) == origin:
                             target = normalize_url(urljoin(current, next_url))
                             if target not in visited and target not in pending:
                                 pending.append(target)
@@ -266,7 +271,7 @@ class Discovery:
                         before = (tuple(data["media"]), tuple(i["url"] for i in data["items"]))
                         button.click()
                         self.cancel.wait(0.7)
-                        if urlsplit(page.url).netloc != origin:
+                        if origin_key(page.url) != origin:
                             self.emit(
                                 "log",
                                 level="warning",

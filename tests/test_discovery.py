@@ -63,3 +63,11 @@ def test_button_pagination(media_site, tmp_path):
         [origin + "/buttons.html"]
     )
     assert len(items) == 1 and items[0].url == origin + "/tiny.mp4"
+
+
+def test_navigation_origin_includes_scheme_and_effective_port():
+    from videobot.discovery import origin_key
+
+    assert origin_key("https://example.com/a") == origin_key("https://example.com:443/b")
+    assert origin_key("https://example.com/a") != origin_key("http://example.com/a")
+    assert origin_key("https://example.com:444/a") != origin_key("https://example.com/a")
