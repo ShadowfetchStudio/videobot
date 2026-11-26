@@ -316,3 +316,18 @@ def test_windowed_worker_event_protocol(tmp_path, monkeypatch):
         assert task({"action": "run", "db": str(tmp_path / "queue.sqlite3"), "event_path": str(event_path)}) == 0
         sys.stdout.close()
     assert json.loads(event_path.read_text())["status"] == "completed"
+
+
+def test_redaction_removes_entire_credential_headers():
+    for line in (
+        "Authorization: Bearer secret-credential",
+        "Proxy-Authorization: Basic secret-credential",
+        "Cookie: session=secret-credential; second=also-private",
+        "Set-Cookie: session=secret-credential; Path=/",
+        'password="secret-credential with spaces"',
+    ):
+        cleaned = redact(line + "\nnext diagnostic line")
+        assert "secret-credential" not in cleaned
+        assert "also-private" not in cleaned
+        assert "[redacted]" in cleaned
+        assert cleaned.endswith("next diagnostic line")

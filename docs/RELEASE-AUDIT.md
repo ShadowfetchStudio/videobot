@@ -2,18 +2,28 @@
 
 ## Local second audit — November 26, 2026
 
-All F01–F24 findings have implementation changes and the evidence mapped below. **35 local tests passed**, including native and direct downloads, valid small clips, HLS, WebM, editing conversion, audio/time ranges, protected local media, retry timing, disk limits, crash recovery, and supervised cancellation. Ruff and formatting checks pass. Wheel/sdist and the macOS application build succeed. A packaged browser inspection and native download passed; the final package cycle also exercises actual GUI startup.
+All F01–F24 findings have implementation changes and the evidence mapped below. **37 local tests passed**, including native and direct downloads, valid small clips, HLS, WebM, editing conversion, audio/time ranges, protected local media, retry timing, disk limits, crash recovery, and supervised cancellation. Ruff and formatting checks pass. Wheel/sdist and the macOS application build succeed. A packaged browser inspection and native download passed; the package cycle also exercises actual GUI startup and clean shutdown.
 
-The audit found and fixed additional issues: repeated window-close handling; WAV extension selection during audio clipping; PID reuse during recovery; Unicode file I/O on Windows; process children surviving root termination; GUI thread cleanup; partial authentication/session propagation; and Chromium bundle signing/layout. yt-dlp extraction/postprocessing now runs in a separately supervised process so cancellation and resource checks apply through FFmpeg operations, including the CLI.
+The audit found and fixed additional issues: repeated window-close handling; WAV extension selection during audio clipping; PID reuse during recovery; Unicode file I/O on Windows; process children surviving root termination; GUI thread cleanup; partial authentication/session propagation; Chromium bundle signing/layout; native Qt shutdown ordering; and full authorization/cookie-header redaction. yt-dlp extraction/postprocessing now runs in a separately supervised process so cancellation and resource checks apply through FFmpeg operations, including the CLI.
 
 The project retains its MIT source license. The desktop binding now uses PySide6 Essentials, and packages collect production third-party notices. No developer signing or notarization identity is configured.
 
-## Release gates
+## Verification record and merge policy
 
-- Local source regression suite, lint, second audit: passed.
-- Local macOS wheel/application build and packaged acceptance: recorded in this release's evidence.
-- Windows/Linux/macOS GitHub CI and desktop packages: must pass on the final PR revision before merge.
-- PR merge and main-branch verification: pending until remote gates pass.
+- **37 local regression/integration tests passed**, with lint and formatting checks.
+- The [initial cross-platform source run](https://github.com/ShadowfetchStudio/videobot/actions/runs/45877500307) passed on Windows, macOS, Linux/Python 3.12 and Linux/Python 3.11, including the dependency audit.
+- The [shutdown-fix package run](https://github.com/ShadowfetchStudio/videobot/actions/runs/45878332544) exercises the real packaged executable on all three systems: GUI open/close and screenshot, bundled headless Chromium inspection, and a native download through the nested transfer worker. The first package attempt exposed a native shutdown crash; widgets are now explicitly destroyed while QApplication is alive.
+- Final credential-redaction and workflow updates have their own regression coverage and must pass **all source, dependency and package checks on the final PR revision before merge**. Live results and merge state are recorded in [PR #1](https://github.com/ShadowfetchStudio/videobot/pull/1/checks), not inferred from an older passing run.
+- [Main-branch CI](https://github.com/ShadowfetchStudio/videobot/actions/workflows/ci.yml?query=branch%3Amain) verifies the merged source. Build artifacts are available from the package workflow; no signed installer or separate GitHub Release is implied.
+
+| Environment | Acceptance coverage |
+|---|---|
+| macOS 26, Apple silicon, Python 3.12 | source tests, GUI lifecycle, packaged discovery/download, disk image |
+| Windows x64, Python 3.12 | source tests, GUI lifecycle, packaged discovery/download, per-user installer |
+| Ubuntu 26.04 x64, Python 3.12 | source tests, GUI lifecycle, packaged discovery/download, portable archive |
+| Ubuntu 26.04 x64, Python 3.11 | source compatibility tests |
+
+The stubborn-child SIGTERM fixture is intentionally Unix-only; Windows still runs the live-transfer cancellation fixture. CI jobs have a 15-minute bound and report the active test if they stall. GitHub Actions use pinned, reviewed current versions.
 
 ## Scope and honest limits
 
@@ -60,6 +70,6 @@ Install FFmpeg/ffprobe first. On Windows, use the shell's environment-variable s
 | F19 history/duplicates | transactional queue + output identity + retry | concurrent claim/dedup/recovery tests |
 | F20 HTML/unbounded logs | QPlainTextEdit + 1,200 block cap + redaction | desktop/log tests |
 | F21 setup drift | Python baseline, EJS/runtime detection, doctor, lock | local doctor + dependency audit |
-| F22 packaging | PyInstaller + platform package workflow | macOS packaged browser/native transfer smoke; platform CI gate below |
-| F23 no tests/CI | pytest fixture suite + multi-platform workflow | 35 local tests; platform CI gate below |
+| F22 packaging | PyInstaller + platform package workflow | packaged GUI/browser/native transfer smoke on all three OS families; final checks linked above |
+| F23 no tests/CI | pytest fixture suite + multi-platform workflow | 37 local tests; final CI checks linked above |
 | F24 resources/retries | byte/free-space guards, bounded retry and cooldown | byte/reserve limits, Retry-After and response cleanup tests; supervised FFmpeg guard |

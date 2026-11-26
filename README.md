@@ -4,7 +4,7 @@
 
 VideoBot is a Python/PySide6 desktop app and headless CLI built around yt-dlp, Playwright and FFmpeg. Version 2.0 replaces the original gallery-only loop with preview and selection, a persistent queue, validated outputs and recoverable job states.
 
-> Version 2.0 release candidate. See the [release audit](docs/RELEASE-AUDIT.md) for verification and platform status. Upstream website and authenticated-account behavior is not implied by local acceptance tests.
+> Version 2.0 source and desktop packaging. See the [release audit](docs/RELEASE-AUDIT.md) and [current CI checks](https://github.com/ShadowfetchStudio/videobot/actions) for verification and platform status. Upstream website and authenticated-account behavior is not implied by local acceptance tests.
 
 ![VideoBot desktop preview with example fixture](docs/images/desktop.png)
 
@@ -21,6 +21,18 @@ VideoBot is a Python/PySide6 desktop app and headless CLI built around yt-dlp, P
 - Opt-in browser/cookie-file authentication for the current session; no cookies in saved profiles or exported manifests.
 - Bounded discovery, size/free-space budgets, retries and a minimum five-second cooldown after successful downloads.
 - Saved output profiles, URL-file import, library-manifest export and a CLI using the same engine.
+
+## Desktop build downloads
+
+Open a successful [Desktop packages workflow](https://github.com/ShadowfetchStudio/videobot/actions/workflows/build.yml) and download the artifact for your system (GitHub sign-in required). Each artifact contains the package and `SHA256SUMS.txt`:
+
+| System | Package | Installation |
+|---|---|---|
+| Windows x64 | `VideoBot-2.0.0-Windows-Setup.exe` | Per-user installer; administrator access is not required. |
+| macOS Apple silicon | `VideoBot-macOS.dmg` | Open the disk image and copy VideoBot to Applications. |
+| Linux x64 | `VideoBot-Linux.tar.gz` | Extract the entire folder and run its `VideoBot` executable. |
+
+These are CI build artifacts, not a separately published GitHub Release. They bundle Python, Qt and headless Chromium, but still require FFmpeg/ffprobe and a supported JavaScript runtime as described below. They are unsigned/unnotarized; verify provenance and checksums before choosing whether to run them. Intel macOS and other Linux baselines need their own build and validation.
 
 ## Install from source
 

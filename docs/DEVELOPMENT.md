@@ -13,7 +13,7 @@ On Windows set `QT_QPA_PLATFORM=offscreen` through your shell instead of the inl
 
 ## Dependencies
 
-`pyproject.toml` declares supported ranges. `requirements-lock.txt` records a universal resolved production environment with hashes. Install it with `python -m pip install --require-hashes -r requirements-lock.txt`, then `python -m pip install --no-deps -e .`. CI also tests the supported dependency ranges to detect upstream drift. Update yt-dlp intentionally and rerun fixtures: source sites change independently of VideoBot. Do not suppress dependency audit failures without documenting a specific reviewed exception.
+`pyproject.toml` declares supported ranges. `requirements-lock.txt` records a universal resolved production environment with hashes. Install it with `python -m pip install --require-hashes -r requirements-lock.txt`, then `python -m pip install --no-deps -e .`. CI also tests the supported dependency ranges to detect upstream drift. GitHub Actions are pinned to reviewed commit hashes; update the version comments and hashes together, then rerun source and packaged acceptance. Update yt-dlp intentionally and rerun fixtures: source sites change independently of VideoBot. Do not suppress dependency audit failures without documenting a specific reviewed exception.
 
 ## Desktop packages
 

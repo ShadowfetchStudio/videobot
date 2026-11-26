@@ -50,7 +50,13 @@ def redact(text):
             return "[redacted URL]"
 
     text = re.sub(r'https?://[^\s<>"\']+', clean, str(text))
-    text = re.sub(r"(?i)(authorization|cookie|token|password)\s*[:=]\s*[^\s,;]+", r"\1=[redacted]", text)
+    # Header values can contain spaces (Bearer credentials) and multiple cookies.
+    # Redact the whole remainder of that line, not merely its first token.
+    text = re.sub(
+        r"(?im)\b(proxy-authorization|authorization|set-cookie|cookie|token|password)[ \t]*[:=][^\r\n]*",
+        r"\1=[redacted]",
+        text,
+    )
     return text[:4000]
 
 
