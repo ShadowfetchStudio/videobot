@@ -1,0 +1,15 @@
+# Changelog
+
+## 2.0.0 — unreleased
+
+- Replace the gallery-only loop with native single/playlist/channel inspection and bounded generic discovery.
+- Add preview/selection, SQLite queue/history, retry/recovery, profiles, URL imports and library manifests.
+- Validate media streams, retain valid small clips, stage partial downloads and publish verified bundles atomically.
+- Track exact final output paths, enforce resolution ceilings and correct WebM merge selection.
+- Add process-supervised cancellation, coordinated window close, real progress and explicit outcome states.
+- Add audio-only output, subtitles, metadata, thumbnails, time ranges and editing-compatible conversion.
+- Repair relative/nested metadata extraction, pagination cycles, button handling, scope filtering and JavaScript escapes.
+- Add session-only cookie configuration, redacted plain-text logs, disk budgets, bounded retries and diagnostics.
+- Add local regression/integration fixtures, platform CI, packaging workflows and updated documentation.
+
+Release status and validation limits are recorded in docs/RELEASE-AUDIT.md. This entry does not assert that publication or final acceptance has occurred.

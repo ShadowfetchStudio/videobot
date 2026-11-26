@@ -1,0 +1,22 @@
+name: Bug report
+description: Report a reproducible download, queue or desktop problem
+body:
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and actual behavior
+      description: Include steps to reproduce and whether a local/public fixture works.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS and VideoBot version, plus sanitized Diagnostics output.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized error
+      description: Never attach cookies, account credentials, the queue database or signed URLs.

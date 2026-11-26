@@ -1,169 +1,100 @@
 # VideoBot
 
-A smart desktop video scraper built with Python, PyQt6, Playwright, and yt-dlp.
+**Discover media, choose what to save, and keep a reliable download library.**
 
-VideoBot crawls listing/gallery pages, follows each item to its detail page, downloads the video, waits 5 seconds (always), then moves on — page after page until you tell it to stop.
+VideoBot is a Python/PyQt6 desktop app and headless CLI built around yt-dlp, Playwright and FFmpeg. Version 2.0 replaces the original gallery-only loop with preview and selection, a persistent queue, validated outputs and recoverable job states.
 
----
+> Development status: the 2.0 upgrade is under validation. See [release audit](docs/RELEASE-AUDIT.md) for actual checks and remaining gates. A feature listed here is not a claim that every website, authenticated account or OS configuration has been tested.
 
-## Features
+![VideoBot desktop preview with example fixture](docs/images/desktop.png)
 
-- **Dual-engine download**
-  - **yt-dlp** handles YouTube, Vimeo, Twitter/X, TikTok, Dailymotion, Reddit, and 1000+ other platforms automatically
-  - **Playwright direct extraction** falls back for sites with raw `<video>` tags, MP4/WebM links, og:video meta, JSON-LD VideoObject, and `data-*` attributes
-- **Smart two-phase crawler** — JS scoring heuristic finds item page links on listing/gallery pages, same approach as ScrapeBot
-- **Quality selector** — Best, 1080p, 720p, 480p, or Worst
-- **Format preference** — MP4, WebM, or Any
-- **Respectful rate limiting** — hardcoded 5-second wait after every download, never skipped
-- **File validation** — rejects files under 100 KB
-- **Unlimited pagination** — auto-clicks next page until max pages reached or Stop pressed
-- **Dark desktop UI** — live stat cards, scrolling log, progress bar
+## Capabilities
 
----
+- Inspect single video URLs, supported playlists/channels, direct media and generic HTML galleries.
+- Preview titles, duration, formats when provided by the source, creator and thumbnails; select items before queuing.
+- Persistent SQLite queue and history; duplicate prevention, retry failed/interrupted jobs and restart recovery.
+- Real transfer progress, speed/ETA where known, plain-text bounded logs and explicit completed/failed/cancelled states.
+- Strict resolution ceilings, native/MP4/WebM containers, MP3 audio, subtitle selection, thumbnails, metadata and optional time ranges.
+- Editing-compatible H.264/AAC preset (transcodes and therefore takes longer).
+- Job-owned temporary storage, ffprobe validation, exact output paths and atomic completed-folder publication.
+- Per-video folders with provenance, SHA-256 checksums, creator/title, retrieval time and rights notes.
+- Opt-in browser/cookie-file authentication for the current session; no cookies in saved profiles or exported manifests.
+- Bounded discovery, size/free-space budgets, retries and a minimum five-second cooldown after successful downloads.
+- Saved output profiles, URL-file import, library-manifest export and a CLI using the same engine.
 
-## Setup
+## Install from source
 
-### Requirements
+Use **Python 3.11 or newer** (3.12 is the primary development environment).
 
-- Python 3.9+
-- ffmpeg (for merging video+audio tracks from YouTube etc.)
-  ```
-  brew install ffmpeg
-  ```
-
-### Install
-
-```bash
+```sh
 git clone https://github.com/ShadowfetchStudio/videobot.git
 cd videobot
-pip install -r requirements.txt
-playwright install chromium
-```
-
-### Run
-
-```bash
-python run.py
-```
-
-### macOS app
-
-`VideoBot.app` runs `run.py` from the folder it sits in, so it works from any clone location. It uses `.venv/bin/python3` in the repo folder if that exists, otherwise `python3` from your login shell, and it runs `run.py` with your login-shell `PATH`, so Homebrew tools such as `ffmpeg` are on the `PATH`. Set up the venv once:
-
-```bash
-cd videobot
 python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
-.venv/bin/playwright install chromium
+# macOS/Linux
+source .venv/bin/activate
+# Windows PowerShell instead: .venv\Scripts\Activate.ps1
+python -m pip install -e .
+python -m playwright install chromium
 ```
 
-Then double-click `VideoBot.app` in the repo folder. Keep the app inside the repo folder; it looks for `run.py` next to itself. Output goes to `~/Library/Logs/VideoBot.log`. If Python or the requirements are missing, the app shows a dialog with the setup commands.
+Install **FFmpeg and ffprobe** and put them on PATH:
 
-The app is ad-hoc signed, not notarized. A `git clone` launches directly. If you downloaded the repo as a ZIP, macOS blocks the first launch: right-click the app and choose Open (on macOS 15 and later, try to open it once, then click Open Anyway in System Settings > Privacy & Security), or run `xattr -dr com.apple.quarantine VideoBot.app` in the repo folder.
+- macOS: `brew install ffmpeg`
+- Debian/Ubuntu: `sudo apt install ffmpeg`
+- Windows: install a trusted FFmpeg build; verify `ffmpeg -version` and `ffprobe -version` from a fresh terminal. `winget search ffmpeg` lists available packages.
 
----
+Full YouTube support also needs a supported JavaScript runtime. Install [Deno](https://docs.deno.com/runtime/getting_started/installation/) or a current Node.js release. The Python installation includes `yt-dlp[default]` and its EJS dependency. VideoBot detects Deno first, then Node. See [yt-dlp's current requirements](https://github.com/yt-dlp/yt-dlp#dependencies).
 
-## Usage
-
-1. Paste a listing or gallery URL into **Start URL**
-   - Works with YouTube channels/playlists, Vimeo showcases, video grid sites, etc.
-2. Choose a **Save To** folder (defaults to `~/Downloads/VideoBot`)
-3. Select **Quality** and **Format**
-4. Set **Max Pages** — `∞ Unlimited` runs until you click Stop
-5. Click **▶ Start Scraping**
-
-### Stat cards
-
-| Card | What it counts |
-|------|---------------|
-| Listing Pages | Gallery/listing pages crawled |
-| Items Visited | Individual item URLs followed |
-| Videos Saved  | Files actually downloaded |
-
-### Log panel
-
-Shows real-time progress: page URLs, item URLs, yt-dlp messages, download results, 5-second delay countdowns, and final totals.
-
----
-
-## How it works
-
-### Phase 1 — Find item links (listing page)
-
-Playwright loads the gallery page and runs a JS scoring heuristic over every `<a>` tag:
-
-| Signal | Points |
-|--------|--------|
-| Wraps `<img>` or `<video>` | +6 |
-| Inside a card/grid/feed container | +4 |
-| URL path contains `/video/`, `/watch/`, `/clip/`, etc. | +3 |
-| URL contains `?v=` | +3 |
-| Has `aria-label` or `title` attribute | +1 each |
-
-Links scoring ≥ 4 are collected. The next-page URL is found via `rel="next"`, class-name heuristics, and text content (`Next`, `›`, `»`).
-
-### Phase 2 — Download each item
-
-For every item URL, VideoBot tries two strategies in order:
-
-**A. yt-dlp** — attempts to extract and download using the selected quality/format. Handles platform authentication cookies, HLS streams, DASH, and format merging via ffmpeg.
-
-**B. Playwright direct extraction** — opens the page and scans for video sources using 6 strategies:
-1. `<video src>` and `<video><source src>`
-2. `og:video` / `og:video:secure_url` meta tags
-3. JSON-LD `VideoObject` with `contentUrl`
-4. `<a href>` links ending in `.mp4`, `.webm`, `.mkv`, etc.
-5. `data-video-url`, `data-src`, `data-stream`, etc.
-6. YouTube/Vimeo `<iframe>` embed URLs
-
-After every successful download a **5-second delay** is enforced before moving to the next item.
-
----
-
-## Supported formats
-
-| Format | Extensions |
-|--------|-----------|
-| MP4 | .mp4, .m4v |
-| WebM | .webm |
-| Matroska | .mkv |
-| QuickTime | .mov |
-| AVI | .avi |
-| Flash Video | .flv |
-| Windows Media | .wmv |
-| MPEG | .mpeg, .mpg |
-| Mobile | .3gp, .ogv |
-
----
-
-## Notes
-
-- **yt-dlp** must be installed and **ffmpeg** must be on your PATH for best results
-- Some sites require being logged in — yt-dlp supports `--cookies-from-browser` for this (add to `ydl_opts` in `scraper.py`)
-- Private or age-gated content will require browser cookies; this is not configured by default
-- VideoBot respects the 5-second rule even across page turns — it never batches or skips the delay
-
----
-
-## Project structure
-
-```
-videobot/
-├── videobot/
-│   ├── __init__.py
-│   ├── app.py        # PyQt6 dark UI
-│   ├── worker.py     # QThread background worker
-│   └── scraper.py    # SmartVideoScraper (yt-dlp + Playwright)
-├── VideoBot.app      # Double-clickable macOS launcher
-├── requirements.txt
-├── run.py
-└── README.md
+```sh
+videobot doctor
+videobot-desktop
+# Or: python run.py
 ```
 
-Like this project? You can [buy me a coffee](https://www.buymeacoffee.com/shadowfetcu).
+For reproducible development, see [development and packaging](docs/DEVELOPMENT.md). The original `VideoBot.app` in the checkout remains a source launcher: it is **not** the new self-contained Python/Qt build. Keep that launcher beside `run.py`; its environment must still be installed.
 
----
+## Desktop workflow
 
-## License
+1. Paste one URL per line and click **Inspect URLs**. Discovery does not download the full videos.
+2. Review the candidate list and select the items you want. Playlist entries may not have format/size metadata until extraction; unknown values are shown honestly.
+3. Choose destination/output options and click **Queue selected videos**.
+4. Open **Queue & history**, then **Run queue**.
+5. Use **Stop / pause** to end the current run. Select interrupted jobs and **Retry selected** to requeue them; already queued jobs remain queued.
+6. Use **Open output** for a completed bundle or **Export manifest** for your research library.
 
-MIT. See [LICENSE](LICENSE).
+Authentication choices are session-only. Choose the needed browser or cookie file again when running authenticated queued jobs after a restart. Changing settings does not silently rewrite already queued jobs.
+
+## Outputs and preservation
+
+Each completed job is published as `VideoBot-<job-id>/` under the chosen destination. The folder contains the final media, requested sidecars and `manifest.json`. A hidden `.videobot-staging/` directory holds unfinished job files; interrupted work never appears as a completed final folder. Do not delete staging files while a job is running.
+
+VideoBot checks real media streams instead of rejecting valid clips based on file size. It does not delete pre-existing user files. Removing queue records does not remove media. Query parameters are redacted from exported source URLs to avoid leaking signed credentials; the private queue retains URLs needed for retry. Rights notes default to **unknown** and should be checked before reuse.
+
+## Headless CLI
+
+```sh
+videobot inspect "https://example.com/videos"
+videobot add "https://example.com/video.mp4" --destination "/path/to/library" --quality 1080 --container mp4
+videobot list
+videobot run
+videobot retry JOB_ID
+videobot run --cookie-browser firefox
+```
+
+Use `videobot --db /path/to/queue.sqlite3 ...` for an alternate queue. Set `VIDEOBOT_HOME` to relocate application data. CLI inspection emits JSON events suitable for automation. Source URLs and account access must be authorized by the user running the app.
+
+## Important limits
+
+- A strict height ceiling fails if no suitable format exists. It never silently downloads a larger video. MP4/WebM remux can fail for incompatible codecs; choose native or the editing-compatible preset as appropriate.
+- Stop interrupts the supervised desktop worker; a short grace period allows cleanup before process-tree termination.
+- yt-dlp downloads can resume when supported. Raw HTTP transfers restart safely instead of appending to a possibly changed resource.
+- Generic web crawling stays on the listing origin for navigation and uses page/item/scroll budgets. A warning identifies truncated discovery. Dynamic sites may require a dedicated extractor or manual input.
+- Subtitle/thumbnail availability depends on the source. Cookie access can require OS permission and does not bypass account restrictions or DRM.
+- Stream-copy time ranges can align to keyframes; they are not frame-accurate edits. Editing conversion changes the encoding.
+- See [troubleshooting](docs/TROUBLESHOOTING.md), [architecture](docs/ARCHITECTURE.md), [changelog](CHANGELOG.md) and [security](SECURITY.md).
+
+## Contributing
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md). Reproduction fixtures should be local/generated and must not contain account cookies or signed URLs. Changes to the downloader should include failure-path tests, not only a successful transfer.
+
+[Support ShadowfetchStudio](https://www.buymeacoffee.com/shadowfetcu) · [Report a bug](https://github.com/ShadowfetchStudio/videobot/issues)
