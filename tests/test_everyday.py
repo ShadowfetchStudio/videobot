@@ -240,6 +240,11 @@ def test_diagnostics_async_and_ui_workflows(qtbot, tmp_path):
     win.jobs.selectRow(0)
     win.edit_selected()
     assert win.tabs.currentIndex() == 3 and win.editing_job
+    assert win.apply_edit_btn.isVisible() and win.cancel_edit_btn.isVisible()
+    win.project.setText("Discard this")
+    win.cancel_job_edit()
+    assert all(r["options"].get("project") != "Discard this" for r in win.store.rows())
+    win.edit_selected()
     win.project.setText("Edited")
     win.apply_job_edit()
     assert any(r["options"]["project"] == "Edited" for r in win.store.rows())
@@ -340,3 +345,30 @@ def test_cli_edit_export_and_selected_run(tmp_path, capsys):
     assert states[a]["status"] == "completed" and states[a]["options"]["max_bytes"] == 100000
     assert states[b]["status"] == "queued"
     store.close()
+
+
+def test_image_disguised_as_video_is_rejected(tmp_path):
+    from videobot.runtime import media_probe
+
+    image = tmp_path / "fake.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=red:s=32x32",
+            "-frames:v",
+            "1",
+            "-c:v",
+            "png",
+            "-f",
+            "image2",
+            str(image),
+        ],
+        check=True,
+    )
+    with pytest.raises(ValueError, match="still image"):
+        media_probe(image, Cancellation())

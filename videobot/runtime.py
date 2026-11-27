@@ -187,6 +187,15 @@ def media_probe(path, cancel, audio_only=False):
     types = {s.get("codec_type") for s in data.get("streams", [])}
     if "audio" not in types if audio_only else "video" not in types:
         raise ValueError("The downloaded file does not contain the requested media stream.")
+    if not audio_only:
+        video = [
+            s
+            for s in data.get("streams", [])
+            if s.get("codec_type") == "video" and not s.get("disposition", {}).get("attached_pic")
+        ]
+        format_name = data.get("format", {}).get("format_name", "")
+        if not video or format_name.endswith("_pipe") or format_name in ("image2", "image2pipe"):
+            raise ValueError("The input is a still image or cover art, not a video.")
     if Path(path).stat().st_size == 0:
         raise ValueError("The downloaded file is empty.")
     return data

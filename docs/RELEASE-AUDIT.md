@@ -2,7 +2,9 @@
 
 ## Everyday workspace — November 26, 2026
 
-Local acceptance: **55 tests pass** on macOS, including real audio conversions in five formats, precise video clips, checksum tampering, mixed-source discovery, queued-policy editing, scheduling/priority, backup recovery, safe cleanup and responsive desktop diagnostics. Ruff passes. The macOS package passes actual GUI startup/shutdown, bundled browser inspection and a native download. Python wheel/sdist and dependency audit are checked separately in the release workflow.
+Local acceptance: **56 tests pass** on macOS, including real audio conversions in five formats, precise video clips, checksum tampering, mixed-source discovery, queued-policy editing, scheduling/priority, backup recovery, safe cleanup and responsive desktop diagnostics. Ruff passes. The macOS package passes actual GUI startup/shutdown, bundled browser inspection and a native download. Python wheel/sdist and dependency audit are checked separately in the release workflow.
+
+An additional validation regression rejects still images/attached cover art masquerading as video. The final UI adjustment pins Apply/Cancel beside the job editor and preserves cancelled edits.
 
 All eight reproduced 2.0 re-audit defects have regressions:
 

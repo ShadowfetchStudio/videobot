@@ -7,7 +7,7 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, QUrl, QDateTime
+from PySide6.QtCore import Qt, QTimer, QUrl, QDateTime, QItemSelectionModel
 from shiboken6 import delete
 from PySide6.QtGui import QDesktopServices, QImageReader, QPixmap, QShortcut, QKeySequence
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest
@@ -212,6 +212,7 @@ class MainWindow(QMainWindow):
         filters.addWidget(self.status_filter)
         q.addLayout(filters)
         self.queue_summary = QLabel()
+        self.queue_summary.setWordWrap(True)
         q.addWidget(self.queue_summary)
         self.jobs = QTableWidget(0, 7)
         self.jobs.setHorizontalHeaderLabels(
@@ -254,6 +255,7 @@ class MainWindow(QMainWindow):
         self.library_search.textChanged.connect(self.refresh_jobs)
         lib.addWidget(self.library_search)
         self.library_summary = QLabel()
+        self.library_summary.setWordWrap(True)
         lib.addWidget(self.library_summary)
         self.library = QTableWidget(0, 5)
         self.library.setHorizontalHeaderLabels(["Title", "Project", "Tags", "Folder", "ID"])
@@ -275,6 +277,8 @@ class MainWindow(QMainWindow):
         left_layout.addWidget(self.tabs)
         self.status = QLabel("Ready")
         self.status.setTextFormat(Qt.TextFormat.PlainText)
+        self.status.setWordWrap(True)
+        self.status.setMaximumHeight(60)
         left_layout.addWidget(self.status)
         progress = QHBoxLayout()
         self.progress = QProgressBar()
@@ -423,7 +427,6 @@ class MainWindow(QMainWindow):
         r.addWidget(auth)
         self.apply_edit_btn = self.button("Apply changes to selected job", self.apply_job_edit, True)
         self.apply_edit_btn.setVisible(False)
-        r.addWidget(self.apply_edit_btn)
         r.addStretch()
         options_area.setWidget(right)
         settings_page = QWidget()
@@ -435,6 +438,10 @@ class MainWindow(QMainWindow):
         )
         setup_note.setWordWrap(True)
         setup.addWidget(setup_note)
+        setup.addWidget(self.apply_edit_btn)
+        self.cancel_edit_btn = self.button("Cancel job edit", self.cancel_job_edit)
+        self.cancel_edit_btn.setVisible(False)
+        setup.addWidget(self.cancel_edit_btn)
         setup.addWidget(self.button("Check dependencies", self.show_diagnostics, True))
         setup.addWidget(self.button("Export support report", self.export_support))
         setup.addWidget(self.button("Back up queue && profiles", self.backup_queue))
@@ -746,7 +753,10 @@ class MainWindow(QMainWindow):
                 item.setToolTip(value)
                 self.jobs.setItem(row, col, item)
             if job["id"] in selected:
-                self.jobs.selectRow(row)
+                self.jobs.selectionModel().select(
+                    self.jobs.model().index(row, 0),
+                    QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+                )
         counts = {
             state: sum(r["status"] == state for r in self.rows)
             for state in ("queued", "running", "failed", "cancelled", "completed")
@@ -771,7 +781,10 @@ class MainWindow(QMainWindow):
             for col, value in enumerate(values):
                 self.library.setItem(row, col, QTableWidgetItem(value))
             if job["id"] in selected:
-                self.library.selectRow(row)
+                self.library.selectionModel().select(
+                    self.library.model().index(row, 0),
+                    QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+                )
         self.update_actions()
         self.library_summary.setText(
             f"{len(saved)} saved item(s). Double-click to play in your default media player."
@@ -971,6 +984,7 @@ class MainWindow(QMainWindow):
     def scheduler_tick(self):
         if self._store_closed or self.closing or (self.worker and self.worker.isRunning()):
             return
+        self.refresh_jobs()
         if self.auto_run.isChecked() and any(
             j["status"] == "queued" and j["not_before"] <= time.time() for j in self.store.rows()
         ):
@@ -989,17 +1003,31 @@ class MainWindow(QMainWindow):
         if len(ids) != 1 or not job or job["status"] not in ("queued", "failed", "cancelled"):
             self.status.setText("Select one queued, failed or cancelled job to edit.")
             return
+        try:
+            self.before_edit = self.options().public_dict()
+        except ValueError:
+            self.before_edit = self.store.setting("options", Options().public_dict())
         self.editing_job = job["id"]
         self._load_options(job["options"])
         self.apply_edit_btn.setVisible(True)
+        self.cancel_edit_btn.setVisible(True)
         self.tabs.setCurrentIndex(3)
         self.status.setText("Editing " + (job["candidate"]["title"] or job["id"]) + ". Apply changes when ready.")
+
+    def cancel_job_edit(self):
+        self.editing_job = None
+        self._load_options(self.before_edit)
+        self.apply_edit_btn.setVisible(False)
+        self.cancel_edit_btn.setVisible(False)
+        self.tabs.setCurrentIndex(1)
+        self.status.setText("Job edit cancelled; queued settings were preserved.")
 
     def apply_job_edit(self):
         try:
             self.store.edit(self.editing_job, self.options())
             self.editing_job = None
             self.apply_edit_btn.setVisible(False)
+            self.cancel_edit_btn.setVisible(False)
             self.refresh_jobs()
             self.tabs.setCurrentIndex(1)
             self.status.setText("Job settings updated. Retry failed/cancelled items when ready.")
