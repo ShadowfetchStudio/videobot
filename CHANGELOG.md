@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.3.0 — Apple silicon research workspace
+
+- Maintain macOS Apple silicon only; archive earlier platform guidance without deleting old releases.
+- Fix filtered selection, Generic source identity collisions, audio-only ceilings, raw audio discovery, tools-path editing, schedule preservation and the clipped footer.
+- Add verified bundle recovery, portable collections with saved excerpts, transcript corrections and indexed phrase search.
+- Add optional whisper.cpp / Apple Metal transcription, background queue runs and bounded watched sources.
+- Preserve stable native table row identities to avoid the reproduced accessibility crash sequence; full screen-reader qualification remains open.
+- Package a native icon and exact source/runtime metadata; run Mac-only source and packaged checks with locked dependencies.
+
+See [release notes and validation limits](docs/releases/2.3.0.md).
+
 ## 2.2.0 — Library playback and speech tools (source/development builds)
 
 - Embedded Qt media player with scrubbing, volume, persistent visual In/Out markers and immutable-source clip export.
@@ -35,4 +46,4 @@
 - Find standard Homebrew/user tools when launched from macOS Finder; package acceptance uses a Finder-style PATH.
 - Pin current GitHub Actions by commit and bound CI job time.
 
-Release status and validation limits are recorded in docs/RELEASE-AUDIT.md. CI artifacts are separate from publishing a signed installer or a GitHub Release.
+Current release validation limits are recorded in docs/releases/2.3.0.md; docs/RELEASE-AUDIT.md is historical. CI artifacts are separate from publishing a signed installer or a GitHub Release.

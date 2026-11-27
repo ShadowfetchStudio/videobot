@@ -40,6 +40,18 @@ def main():
         assert screenshot.is_file() and screenshot.stat().st_size > 1000
         web = root / "web"
         web.mkdir()
+        speech = root / "speech.aiff"
+        subprocess.run(
+            [
+                "say",
+                "-r",
+                "135",
+                "-o",
+                str(speech),
+                "This video keeps source information. The library stores a clear transcript for every research project.",
+            ],
+            check=True,
+        )
         subprocess.run(
             [
                 "ffmpeg",
@@ -49,10 +61,8 @@ def main():
                 "lavfi",
                 "-i",
                 "color=c=blue:s=128x96:d=5",
-                "-f",
-                "lavfi",
                 "-i",
-                "anullsrc=r=16000:cl=mono",
+                str(speech),
                 "-t",
                 "5",
                 "-c:a",
@@ -141,7 +151,10 @@ def main():
                 },
                 "transcribe",
             )
-            assert store.transcript(job["id"]) is not None
+            transcript = store.transcript(job["id"])
+            assert transcript and transcript["segments"], "Spoken fixture must produce words"
+            recognized = " ".join(segment["text"] for segment in transcript["segments"]).lower()
+            assert "source" in recognized or "video" in recognized, recognized
             store.close()
             print(
                 json.dumps(

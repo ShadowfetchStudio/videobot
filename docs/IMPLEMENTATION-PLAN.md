@@ -1,3 +1,5 @@
+> Historical reference for earlier versions. For the maintained Apple silicon release and current behavior, see [VideoBot 2.3](MAC-2.3.md).
+
 # VideoBot 2.0 implementation and acceptance plan
 
 Goal: fix every finding F01–F24 in the November 26 audit, expand the app into a reliable desktop media queue, audit the resulting implementation, then push a reviewed pull request and merge after checks.

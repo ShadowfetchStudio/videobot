@@ -24,6 +24,8 @@ MEDIA = {
     ".opus",
     ".ogg",
     ".aac",
+    ".aiff",
+    ".aif",
 }
 
 

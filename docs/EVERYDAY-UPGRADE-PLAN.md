@@ -1,3 +1,5 @@
+> Historical reference for earlier versions. For the maintained Apple silicon release and current behavior, see [VideoBot 2.3](MAC-2.3.md).
+
 # Everyday VideoBot upgrade — acceptance plan
 
 The goal is a reliable application that is comfortable for daily use, including a real UI audit and improvements. The prior re-audit is the starting evidence, not a completion claim.

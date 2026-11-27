@@ -1,3 +1,5 @@
+> Historical reference for earlier versions. For the maintained Apple silicon release and current behavior, see [VideoBot 2.3](MAC-2.3.md).
+
 # VideoBot 2.1 release audit
 
 ## Everyday workspace — November 26, 2026

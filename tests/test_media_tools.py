@@ -220,3 +220,125 @@ def test_audio_backend_fallback_preserves_explicit_and_active_services(tmp_path,
     (tmp_path / "pipewire-0").touch()
     configure_audio_backend()
     assert "QT_AUDIO_BACKEND" not in __import__("os").environ
+
+
+def test_relink_rejects_old_copy_missing_active_transcript(saved, tmp_path):
+    store, job = saved
+    copy = tmp_path / "old-copy"
+    shutil.copytree(job["output"], copy)
+    save_transcript(store, job, [{"start": 0, "end": 0.4, "text": "Review"}], "tiny", "en", "abc", Cancellation())
+    result = relink(store, [job["id"]], copy, Cancellation(), lambda *a, **k: None)
+    assert not result[0]["ok"]
+    assert "transcript" in result[0]["error"]
+    assert store.rows()[0]["output"] == job["output"]
+
+
+def test_import_orphan_clip_and_collection(saved, tmp_path):
+    from videobot.recovery import import_bundles, export_collection
+
+    store, job = saved
+    with store.db:
+        store.db.execute(
+            "CREATE TRIGGER fail_clip BEFORE INSERT ON jobs WHEN NEW.identity LIKE 'clip:%' BEGIN SELECT RAISE(ABORT, 'test'); END"
+        )
+    with pytest.raises(RuntimeError, match="retained"):
+        create_clip(store, job["id"], 0.1, 0.5, tmp_path / "clips", Cancellation(), lambda *a, **k: None)
+    with store.db:
+        store.db.execute("DROP TRIGGER fail_clip")
+    results = import_bundles(store, tmp_path / "clips", Cancellation(), lambda *a, **k: None)
+    assert all(r["ok"] for r in results)
+    assert len(store.rows()) == 2
+    import_bundles(store, tmp_path / "clips", Cancellation(), lambda *a, **k: None)
+    assert len(store.rows()) == 2
+    save_transcript(
+        store,
+        job,
+        [{"start": 0, "end": 0.4, "text": "Reviewed quotation"}],
+        "tiny",
+        "en",
+        file_record(Path(job["output"]) / "fixture.mp4", Cancellation())["sha256"],
+        Cancellation(),
+        machine_generated=False,
+    )
+    store.set_setting("excerpts:" + job["id"], [{"name": "Quote", "start": 0.1, "end": 0.4}])
+    export_collection(store, [job["id"]], tmp_path / "collection", Cancellation(), lambda *a, **k: None)
+    other = Store(tmp_path / "other.sqlite3")
+    try:
+        results = import_bundles(other, tmp_path / "collection", Cancellation(), lambda *a, **k: None)
+        assert all(r["ok"] for r in results)
+        assert other.search_transcripts("Reviewed")
+        assert other.transcript(job["id"])["machine_generated"] is False
+        assert other.setting("excerpts:" + job["id"])[0]["name"] == "Quote"
+    finally:
+        other.close()
+
+
+def test_metal_backend_spoken_fixture(saved, tmp_path):
+    import os
+    from videobot.media_tools import transcribe_cpp
+
+    model = os.environ.get("VIDEOBOT_METAL_MODEL")
+    if not model:
+        pytest.skip("Optional local Metal model not configured")
+    store, job = saved
+    speech = tmp_path / "spoken.aiff"
+    subprocess.run(
+        ["say", "-r", "130", "-o", str(speech), "This video keeps source information for every research project."],
+        check=True,
+    )
+    media = Path(job["output"]) / "fixture.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=blue:s=160x120:d=8",
+            "-i",
+            str(speech),
+            "-shortest",
+            "-c:v",
+            "libx264",
+            "-c:a",
+            "aac",
+            str(media),
+        ],
+        check=True,
+    )
+    manifest_path = Path(job["output"]) / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["files"] = [file_record(media, Cancellation())]
+    manifest_path.write_text(json.dumps(manifest))
+    result = transcribe_cpp(store, job["id"], model, Cancellation(), lambda *a, **k: None)
+    assert result["segments"] > 0
+    assert store.search_transcripts("source")
+
+
+def test_import_rejects_wrong_transcript_and_rolls_back_invalid_segments(saved, tmp_path):
+    from videobot.recovery import import_bundles
+
+    store, job = saved
+    digest = file_record(Path(job["output"]) / "fixture.mp4", Cancellation())["sha256"]
+    sidecar = Path(
+        save_transcript(store, job, [{"start": 0, "end": 0.4, "text": "Test"}], "tiny", "en", digest, Cancellation())
+    )
+    path = sidecar / "transcript.json"
+    original = json.loads(path.read_text())
+    other = Store(tmp_path / "import.sqlite3")
+    try:
+        for invalid in (
+            dict(original, media_sha256="wrong"),
+            dict(original, segments=[{"start": -1, "end": 2, "text": "Bad"}]),
+        ):
+            path.write_text(json.dumps(invalid))
+            result = import_bundles(other, job["output"], Cancellation(), lambda *a, **k: None)
+            assert not result[0]["ok"]
+            assert not other.rows()
+            assert not other.search_transcripts("Test")
+        path.write_text(json.dumps(original))
+        assert import_bundles(other, job["output"], Cancellation(), lambda *a, **k: None)[0]["ok"]
+    finally:
+        other.close()

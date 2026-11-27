@@ -111,7 +111,7 @@ class Downloader:
         probe = media_probe(media, self.cancel, audio_only=self.options.audio_only)
         # Direct inputs also obey hard ceilings; never silently exceed selected height.
         height = max((s.get("height", 0) for s in probe["streams"]), default=0)
-        if self.options.quality.isdigit() and height > int(self.options.quality):
+        if not self.options.audio_only and self.options.quality.isdigit() and height > int(self.options.quality):
             raise ValueError(f"Video is {height}p, above the {self.options.quality}p ceiling. Choose another quality.")
         media = self._transform(media, work)
         if candidate.direct and self.options.embed_metadata and candidate.title:

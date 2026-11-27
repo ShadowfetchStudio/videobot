@@ -1,15 +1,16 @@
 """VideoBot desktop: inspect, select, queue, recover."""
 
 import json
+import shutil
 import os
 import time
 import sys
 from dataclasses import asdict
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, QUrl, QDateTime, QItemSelectionModel
+from PySide6.QtCore import Qt, QTimer, QUrl, QDateTime
 from shiboken6 import delete
-from PySide6.QtGui import QDesktopServices, QImageReader, QPixmap, QShortcut, QKeySequence
+from PySide6.QtGui import QDesktopServices, QImageReader, QPixmap, QIcon, QShortcut, QKeySequence
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest
 from PySide6.QtWidgets import (
     QApplication,
@@ -48,6 +49,7 @@ from .models import Candidate, Options
 from .runtime import configure_tool_path, public_data, redact
 from .library import export_library
 from .storage import Store
+from .table import StableTable
 from .worker import TaskWorker
 
 
@@ -61,7 +63,7 @@ QPushButton:hover { background:#394969; }
 QPushButton:disabled { color:#778198; background:#1e2433; }
 QPushButton#primary { background:#7657d9; color:white; border-color:#987cf0; font-weight:600; }
 QPushButton#primary:disabled { background:#2a243d; color:#8992a5; border-color:#3c3751; }
-QLineEdit,QPlainTextEdit,QSpinBox,QDoubleSpinBox,QComboBox,QTableWidget { background:#181e2d; border:1px solid #35405a; border-radius:4px; padding:5px; selection-background-color:#504277; }
+QLineEdit,QPlainTextEdit,QSpinBox,QDoubleSpinBox,QComboBox,QTableWidget,QTableView,QTreeView { background:#181e2d; border:1px solid #35405a; border-radius:4px; padding:5px; selection-background-color:#504277; }
 QHeaderView::section { background:#242c40; padding:7px; border:0; }
 QProgressBar { border:1px solid #35405a; border-radius:4px; text-align:center; }
 QProgressBar::chunk { background:#7657d9; }
@@ -77,6 +79,7 @@ class MainWindow(QMainWindow):
     def __init__(self, db_path=None):
         super().__init__()
         self.setWindowTitle(f"VideoBot {__version__}")
+        self.setWindowIcon(QIcon(str(Path(__file__).parent / "assets/videobot.svg")))
         self.resize(1240, 860)
         self.setMinimumSize(840, 620)
         self._store_closed = False
@@ -112,7 +115,7 @@ class MainWindow(QMainWindow):
         self.scheduler.setInterval(5000)
         self.scheduler.timeout.connect(self.scheduler_tick)
         self.scheduler.start()
-        self.tray = QSystemTrayIcon(self.style().standardIcon(self.style().StandardPixmap.SP_MediaPlay), self)
+        self.tray = QSystemTrayIcon(self.windowIcon(), self)
         if QSystemTrayIcon.isSystemTrayAvailable():
             self.tray.show()
         for sequence, callback in (
@@ -123,7 +126,13 @@ class MainWindow(QMainWindow):
         ):
             shortcut = QShortcut(QKeySequence(sequence), self)
             shortcut.activated.connect(callback)
+        self.status.setText(
+            "Start with Check dependencies in Settings. Account authentication is session-only; reselect your account after restarting."
+        )
         self.setAcceptDrops(True)
+        size = self.store.setting("window_size", [1100, 760])
+        area = self.screen().availableGeometry()
+        self.resize(min(size[0], area.width() - 40), min(size[1], area.height() - 60))
 
     def button(self, text, action, primary=False):
         button = QPushButton(text)
@@ -214,20 +223,19 @@ class MainWindow(QMainWindow):
         self.queue_summary = QLabel()
         self.queue_summary.setWordWrap(True)
         q.addWidget(self.queue_summary)
-        self.jobs = QTableWidget(0, 7)
+        self.jobs = StableTable(7)
         self.jobs.setHorizontalHeaderLabels(
             ["Title", "Status", "Tries", "Output / error", "ID", "Priority", "Scheduled"]
         )
         self.jobs.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.jobs.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-        self.jobs.setColumnHidden(4, True)
         self.jobs.setColumnWidth(1, 85)
         self.jobs.setColumnWidth(2, 50)
-        self.jobs.setColumnWidth(5, 60)
-        self.jobs.setColumnWidth(6, 140)
+        self.jobs.setColumnWidth(4, 60)
+        self.jobs.setColumnWidth(5, 140)
         self.jobs.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.jobs.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.jobs.itemSelectionChanged.connect(self.update_actions)
+        self.jobs.selectionModel().selectionChanged.connect(self.update_actions)
         q.addWidget(self.jobs)
         controls = QHBoxLayout()
         self.run_btn = self.button("Run queue", self.run_queue, True)
@@ -257,15 +265,14 @@ class MainWindow(QMainWindow):
         self.library_summary = QLabel()
         self.library_summary.setWordWrap(True)
         lib.addWidget(self.library_summary)
-        self.library = QTableWidget(0, 5)
+        self.library = StableTable(5)
         self.library.setHorizontalHeaderLabels(["Title", "Project", "Tags", "Folder", "ID"])
-        self.library.setColumnHidden(4, True)
         self.library.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.library.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         self.library.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.library.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.library.cellDoubleClicked.connect(lambda *_: self.play_selected())
-        self.library.itemSelectionChanged.connect(self.update_actions)
+        self.library.doubleClicked.connect(lambda *_: self.play_selected())
+        self.library.selectionModel().selectionChanged.connect(self.update_actions)
         lib.addWidget(self.library)
         actions = QHBoxLayout()
         actions.addWidget(self.button("Preview / clip / transcribe", self.play_selected, True))
@@ -276,6 +283,7 @@ class MainWindow(QMainWindow):
         more_library = QHBoxLayout()
         more_library.addWidget(self.button("Relink moved media…", self.relink_selected))
         more_library.addWidget(self.button("Search all transcripts…", self.search_transcripts))
+        more_library.addWidget(self.button("Export collection…", self.export_collection))
         lib.addLayout(more_library)
         self.tabs.addTab(library, "3  Library")
         left_layout.addWidget(self.tabs)
@@ -283,7 +291,6 @@ class MainWindow(QMainWindow):
         self.status.setTextFormat(Qt.TextFormat.PlainText)
         self.status.setWordWrap(True)
         self.status.setMaximumHeight(60)
-        left_layout.addWidget(self.status)
         progress = QHBoxLayout()
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
@@ -291,17 +298,15 @@ class MainWindow(QMainWindow):
         self.stop_btn = self.button("Stop / pause", self.stop)
         self.stop_btn.setEnabled(False)
         progress.addWidget(self.stop_btn)
-        left_layout.addLayout(progress)
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
         self.log.setMaximumBlockCount(1200)
         self.log.setMaximumHeight(110)
         self.log.setVisible(False)
         log_toggle = QCheckBox("Show activity log")
+        log_toggle.setMinimumHeight(30)
         log_toggle.toggled.connect(self.log.setVisible)
-        left_layout.addWidget(log_toggle)
         self.log_toggle = log_toggle
-        left_layout.addWidget(self.log)
         splitter.addWidget(left)
         options_area = QScrollArea()
         options_area.setWidgetResizable(True)
@@ -312,6 +317,7 @@ class MainWindow(QMainWindow):
         r.setContentsMargins(5, 5, 5, 5)
         profiles = QHBoxLayout()
         self.profile = QComboBox()
+        self.profile.setAccessibleName("Output profile")
         self.profile.setPlaceholderText("Saved profiles")
         profiles.addWidget(self.profile, 1)
         profiles.addWidget(self.button("Load", self.load_profile))
@@ -335,6 +341,8 @@ class MainWindow(QMainWindow):
         self.container.addItems(["native", "mp4", "webm"])
         form.addRow("Container", self.container)
         self.audio = QCheckBox("Audio only")
+        self.audio.toggled.connect(lambda checked: self.quality.setEnabled(not checked))
+        self.audio.toggled.connect(lambda checked: self.container.setEnabled(not checked))
         form.addRow(self.audio)
         self.audio_format = QComboBox()
         self.audio_format.addItems(["mp3", "m4a", "flac", "wav", "opus"])
@@ -449,7 +457,12 @@ class MainWindow(QMainWindow):
         setup.addWidget(self.button("Check dependencies", self.show_diagnostics, True))
         setup.addWidget(self.button("Export support report", self.export_support))
         setup.addWidget(self.button("Back up queue && profiles", self.backup_queue))
+        setup.addWidget(self.button("Recovery / import bundles", self.recovery_center))
+        setup.addWidget(self.button("Background queue…", self.background_settings))
+        setup.addWidget(self.button("Watched sources…", self.watched_sources))
         self.tool_path = QLineEdit()
+        self.tool_path.setAccessibleName("Media tools folder")
+        self.tool_path.editingFinished.connect(self.apply_tools_path)
         self.tool_path.setPlaceholderText("Optional folder containing ffmpeg / ffprobe")
         setup.addWidget(QLabel("Media tools folder"))
         setup.addWidget(self.tool_path)
@@ -470,14 +483,32 @@ class MainWindow(QMainWindow):
         )
         setup.addStretch()
         setup.setContentsMargins(12, 12, 12, 12)
-        settings_layout.addLayout(setup, 1)
+        setup_widget = QWidget()
+        setup_widget.setLayout(setup)
+        setup_scroll = QScrollArea()
+        setup_scroll.setWidgetResizable(True)
+        setup_scroll.setMinimumWidth(250)
+        setup_scroll.setWidget(setup_widget)
+        settings_layout.addWidget(setup_scroll, 1)
         self.tabs.addTab(settings_page, "4  Settings")
         self.tabs.currentChanged.connect(self.update_context)
         self.output_summary = QLabel()
         self.output_summary.setWordWrap(True)
         d.insertWidget(1, self.output_summary)
+        self.readiness = QLabel()
+        self.readiness.setWordWrap(True)
+        d.insertWidget(2, self.readiness)
+        d.insertWidget(3, self.button("Check setup and dependencies", self.show_diagnostics))
         d.insertWidget(2, self.button("Choose output settings", lambda: self.tabs.setCurrentIndex(3)))
-        layout.addWidget(splitter)
+        # The whole workspace can scroll at small window sizes; the footer never clips.
+        workspace = QScrollArea()
+        workspace.setWidgetResizable(True)
+        workspace.setWidget(splitter)
+        layout.addWidget(workspace, 1)
+        layout.addWidget(self.status)
+        layout.addLayout(progress)
+        layout.addWidget(log_toggle)
+        layout.addWidget(self.log)
         self.setCentralWidget(body)
 
     def options(self):
@@ -516,6 +547,8 @@ class MainWindow(QMainWindow):
         self.quality.setCurrentText(o.quality)
         self.container.setCurrentText(o.container)
         self.audio.setChecked(o.audio_only)
+        self.quality.setEnabled(not o.audio_only)
+        self.container.setEnabled(not o.audio_only)
         self.audio_format.setCurrentText(o.audio_format)
         self.audio_bitrate.setCurrentText(str(o.audio_bitrate))
         self.accurate.setChecked(o.accurate_range)
@@ -713,7 +746,6 @@ class MainWindow(QMainWindow):
             self.update_actions()
             return
         self._view_signature = signature
-        selected = set(self.selected_ids())
         choice = self.status_filter.currentText()
         query = self.search.text().casefold()
 
@@ -745,7 +777,7 @@ class MainWindow(QMainWindow):
                 else job["status"] != "completed"
             )
         ]
-        self.jobs.setRowCount(len(visible))
+        queue_values = []
         for row, job in enumerate(visible):
             scheduled = time.strftime("%b %d %H:%M", time.localtime(job["not_before"])) if job["not_before"] else "Now"
             values = [
@@ -757,15 +789,8 @@ class MainWindow(QMainWindow):
                 str(job["priority"]),
                 scheduled,
             ]
-            for col, value in enumerate(values):
-                item = QTableWidgetItem(value)
-                item.setToolTip(value)
-                self.jobs.setItem(row, col, item)
-            if job["id"] in selected:
-                self.jobs.selectionModel().select(
-                    self.jobs.model().index(row, 0),
-                    QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
-                )
+            queue_values.append(values)
+        self.jobs.replace_rows(queue_values)
         counts = {
             state: sum(r["status"] == state for r in self.rows)
             for state in ("queued", "running", "failed", "cancelled", "completed")
@@ -778,7 +803,7 @@ class MainWindow(QMainWindow):
         saved = [
             j for j in self.rows if j["status"] == "completed" and matches(j, self.library_search.text().casefold())
         ]
-        self.library.setRowCount(len(saved))
+        library_values = []
         for row, job in enumerate(saved):
             values = [
                 job["candidate"]["title"] or "Untitled",
@@ -787,16 +812,11 @@ class MainWindow(QMainWindow):
                 job["output"],
                 job["id"],
             ]
-            for col, value in enumerate(values):
-                self.library.setItem(row, col, QTableWidgetItem(value))
-            if job["id"] in selected:
-                self.library.selectionModel().select(
-                    self.library.model().index(row, 0),
-                    QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
-                )
+            library_values.append(values)
+        self.library.replace_rows(library_values)
         self.update_actions()
         self.library_summary.setText(
-            f"{len(saved)} saved item(s). Double-click to preview, mark a clip or transcribe."
+            f"{len(saved)} saved item(s). {len(self.library.selectionModel().selectedRows())} selected. Double-click to preview, mark a clip or transcribe."
             if saved
             else "Your saved media will appear here after a download completes. Sources and checksums travel with every bundle."
         )
@@ -911,12 +931,29 @@ class MainWindow(QMainWindow):
         self.urls.setFocus()
 
     def focus_search(self):
-        self.tabs.setCurrentIndex(1)
-        self.search.setFocus()
+        if self.tabs.currentIndex() == 2:
+            self.library_search.setFocus()
+        else:
+            self.tabs.setCurrentIndex(1)
+            self.search.setFocus()
 
     def update_context(self, *_):
         if not hasattr(self, "output_summary"):
             return
+        missing = [tool for tool in ("ffmpeg", "ffprobe") if not shutil.which(tool)]
+        runtime = (
+            "Deno"
+            if shutil.which("deno")
+            else "Node"
+            if shutil.which("node")
+            else "missing (needed for full YouTube support)"
+        )
+        if hasattr(self, "readiness"):
+            self.readiness.setText(
+                ("Media tools ready" if not missing else "Install or locate: " + ", ".join(missing))
+                + " · JavaScript: "
+                + runtime
+            )
         self.update_actions()
         self.output_summary.setText(
             f"Save to: {self.destination.text()}  ·  {self.audio_format.currentText().upper() if self.audio.isChecked() else self.quality.currentText() + ' / ' + self.container.currentText()}"
@@ -975,6 +1012,140 @@ class MainWindow(QMainWindow):
             self.setPalette(QApplication.palette())
         self.store.set_setting("theme", theme)
 
+    def watched_sources(self):
+        from .models import normalize_url
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Watched sources — requires enabled background queue")
+        form = QFormLayout(dialog)
+        sources = QComboBox()
+        watches = self.store.setting("watched_sources", [])
+        sources.addItems([w["url"] for w in watches])
+        form.addRow("Configured sources", sources)
+        url = QLineEdit()
+        url.setPlaceholderText("Public playlist, channel or page URL")
+        form.addRow("New source", url)
+        interval = QSpinBox()
+        interval.setRange(15, 10080)
+        interval.setValue(60)
+        form.addRow("Check every (minutes)", interval)
+        note = QLabel(
+            "New media will be queued and downloaded using the current output settings. Up to 100 items per check; credentials are not saved. Existing items are deduplicated."
+        )
+        note.setWordWrap(True)
+        form.addRow(note)
+
+        def add():
+            try:
+                normalized = normalize_url(url.text())
+                if len(watches) >= 25 or any(w["url"] == normalized for w in watches):
+                    raise ValueError("Source already exists or the 25-source limit has been reached.")
+                options = self.options()
+                options.validate()
+                watches.append({"url": normalized, "minutes": interval.value(), "options": options.public_dict()})
+                self.store.set_setting("watched_sources", watches)
+                sources.addItem(normalized)
+                url.clear()
+            except Exception as exc:
+                self._error(exc)
+
+        def remove():
+            i = sources.currentIndex()
+            if i >= 0:
+                watches.pop(i)
+                sources.removeItem(i)
+                self.store.set_setting("watched_sources", watches)
+
+        form.addRow(self.button("Add source with current output settings", add))
+        form.addRow(self.button("Remove selected watch", remove))
+        form.addRow(self.button("Close", dialog.accept))
+        dialog.exec()
+        dialog.deleteLater()
+
+    def background_settings(self):
+        from . import background
+
+        choice, ok = QInputDialog.getItem(
+            self,
+            "Background queue",
+            "Runs due jobs every minute while logged in, even with the window closed. Requires the app in Applications. Session cookies are unavailable.",
+            ["Enable", "Disable"],
+            0,
+            False,
+        )
+        if ok:
+            try:
+                background.install(self.store.path) if choice == "Enable" else background.disable()
+                self.status.setText("Background queue " + choice.lower() + "d.")
+            except Exception as exc:
+                self._error(exc)
+
+    def export_collection(self):
+        ids = self.selected_ids()
+        if not ids:
+            self.status.setText("Select completed items in Library first.")
+            return
+        destination, _ = QFileDialog.getSaveFileName(self, "New portable collection folder")
+        if destination:
+            self.start_task(
+                {"action": "export_collection", "db": str(self.store.path), "ids": ids, "destination": destination}
+            )
+
+    def recovery_center(self):
+        if self.worker and self.worker.isRunning():
+            self.status.setText("Stop the current task before opening recovery.")
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Recovery center")
+        layout = QVBoxLayout(dialog)
+        label = QLabel(
+            "Import verified bundles, including clips retained after interruption. Existing records and media are preserved. To reconnect an existing item, use Library → Relink moved media."
+        )
+        label.setWordWrap(True)
+        layout.addWidget(label)
+
+        def import_files():
+            folder = QFileDialog.getExistingDirectory(dialog, "Bundle or collection folder")
+            if folder:
+                dialog.accept()
+                self.start_task({"action": "import_bundles", "db": str(self.store.path), "root": folder})
+
+        def restore():
+            from .maintenance import restore_backup
+
+            source, _ = QFileDialog.getOpenFileName(
+                dialog, "Choose queue backup", "", "SQLite (*.sqlite3 *.db);;All files (*)"
+            )
+            if not source:
+                return
+            target, _ = QFileDialog.getSaveFileName(dialog, "Restore to a NEW database", "", "SQLite (*.sqlite3)")
+            if not target:
+                return
+            try:
+                restore_backup(source, target)
+                restored = MainWindow(target)
+                restored.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+                self._restored_windows = getattr(self, "_restored_windows", []) + [restored]
+                restored.show()
+                dialog.accept()
+            except Exception as exc:
+                self._error(exc)
+
+        layout.addWidget(self.button("Import verified bundles…", import_files))
+        layout.addWidget(self.button("Restore backup into a new window…", restore))
+        layout.addWidget(self.button("Close", dialog.reject))
+        dialog.exec()
+        dialog.deleteLater()
+
+    def apply_tools_path(self):
+        folder = self.tool_path.text().strip()
+        if folder and not Path(folder).expanduser().is_dir():
+            self.status.setText("Tools folder does not exist. Choose an existing folder.")
+            return
+        self.tool_path.setText(str(Path(folder).expanduser()) if folder else "")
+        self.set_tool_path()
+        self.status.setText("Tools folder saved. Check dependencies to verify FFmpeg and ffprobe.")
+
     def choose_tools(self):
         path = QFileDialog.getExistingDirectory(self, "Folder containing FFmpeg and ffprobe")
         if path:
@@ -988,6 +1159,7 @@ class MainWindow(QMainWindow):
         folder = self.tool_path.text().strip()
         os.environ["PATH"] = folder + os.pathsep + original if folder and Path(folder).is_dir() else original
         self.store.set_setting("tool_path", folder)
+        self.update_context()
 
     def run_selected(self):
         ids = self.selected_ids()
@@ -1059,8 +1231,20 @@ class MainWindow(QMainWindow):
         form = QFormLayout(dialog)
         priority = QSpinBox()
         priority.setRange(-100, 100)
+        jobs = [j for j in self.rows if j["id"] in ids]
+        priority.setValue(jobs[0]["priority"])
+        change_priority = QCheckBox("Change priority")
+        change_schedule = QCheckBox("Change earliest start")
+        form.addRow(change_priority)
         form.addRow("Priority (higher runs first)", priority)
-        date = QDateTimeEdit(QDateTime.currentDateTime())
+        date = QDateTimeEdit(
+            QDateTime.fromSecsSinceEpoch(int(jobs[0]["not_before"]))
+            if jobs[0]["not_before"]
+            else QDateTime.currentDateTime()
+        )
+        form.addRow(change_schedule)
+        priority.valueChanged.connect(lambda: change_priority.setChecked(True))
+        date.dateTimeChanged.connect(lambda: change_schedule.setChecked(True))
         date.setCalendarPopup(True)
         date.setDisplayFormat("yyyy-MM-dd HH:mm")
         form.addRow("Earliest start (local time)", date)
@@ -1070,7 +1254,11 @@ class MainWindow(QMainWindow):
         buttons.rejected.connect(dialog.reject)
         form.addRow(buttons)
         if dialog.exec():
-            self.store.organize(ids, priority.value(), date.dateTime().toSecsSinceEpoch())
+            self.store.organize(
+                ids,
+                priority.value() if change_priority.isChecked() else None,
+                date.dateTime().toSecsSinceEpoch() if change_schedule.isChecked() else None,
+            )
             self.refresh_jobs()
 
     def undo_remove(self):
@@ -1238,6 +1426,7 @@ class MainWindow(QMainWindow):
             self.store.set_setting("options", self.options().public_dict())
         except ValueError:
             pass
+        self.store.set_setting("window_size", [self.width(), self.height()])
         self.store.set_setting("notifications", self.notifications.isChecked())
         self.store.close()
         self._store_closed = True
@@ -1250,6 +1439,11 @@ def main():
         from .cli import main as cli_main
 
         return cli_main(["_task", sys.argv[2]])
+    if len(sys.argv) == 3 and sys.argv[1] == "--background-queue":
+        from .background import run
+
+        run(sys.argv[2])
+        return 0
     smoke_image = sys.argv[2] if len(sys.argv) > 2 and sys.argv[1] == "--smoke-ui" else None
     app = QApplication(sys.argv[:1] if smoke_image else sys.argv)
     app.setApplicationName("VideoBot")

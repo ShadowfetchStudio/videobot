@@ -24,10 +24,15 @@ def data_dir() -> Path:
     return Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local/share"))) / "videobot"
 
 
+def source_identity(candidate):
+    # Generic IDs are usually filenames, not globally unique media identifiers.
+    if candidate.extractor and candidate.media_id and not candidate.extractor.lower().startswith("generic"):
+        return f"{candidate.extractor}:{candidate.media_id}"
+    return normalize_url(candidate.url)
+
+
 def output_identity(candidate, options):
-    source = (
-        f"{candidate.extractor}:{candidate.media_id}" if candidate.extractor and candidate.media_id else candidate.url
-    )
+    source = source_identity(candidate)
     keys = (
         "destination",
         "quality",
@@ -96,6 +101,31 @@ class Store:
             }.items():
                 if name not in columns:
                     self.db.execute(f"ALTER TABLE jobs ADD COLUMN {name} {declaration}")
+        # Re-key old Generic records without deleting historical duplicates.
+        if not self.setting("generic_identity_v23", False):
+            with self.db:
+                for row in self.db.execute(
+                    "SELECT id,candidate,options FROM jobs WHERE identity NOT LIKE 'clip:%'"
+                ).fetchall():
+                    candidate = Candidate(**json.loads(row["candidate"]))
+                    if candidate.extractor.lower().startswith("generic"):
+                        identity = output_identity(candidate, Options(**json.loads(row["options"])))
+                        self.db.execute("UPDATE OR IGNORE jobs SET identity=? WHERE id=?", (identity, row["id"]))
+            self.set_setting("generic_identity_v23", True)
+        self.db.executescript("""
+        CREATE VIRTUAL TABLE IF NOT EXISTS transcript_words USING fts5(job_id UNINDEXED, ordinal UNINDEXED, text);
+        CREATE TRIGGER IF NOT EXISTS transcript_words_insert AFTER INSERT ON transcript_segments BEGIN
+          INSERT INTO transcript_words(job_id,ordinal,text) VALUES(new.job_id,new.ordinal,new.text);
+        END;
+        CREATE TRIGGER IF NOT EXISTS transcript_words_delete AFTER DELETE ON transcript_segments BEGIN
+          DELETE FROM transcript_words WHERE job_id=old.job_id AND ordinal=old.ordinal;
+        END;
+        """)
+        if not self.setting("fts_initialized", False):
+            with self.db:
+                self.db.execute("DELETE FROM transcript_words")
+                self.db.execute("INSERT INTO transcript_words SELECT job_id,ordinal,text FROM transcript_segments")
+            self.set_setting("fts_initialized", True)
         try:
             self.path.chmod(0o600)
         except OSError:
@@ -113,11 +143,7 @@ class Store:
         defaults = Options()
         added_keys = ("audio_format", "audio_bitrate", "accurate_range", "project")
         if all(getattr(options, k) == getattr(defaults, k) for k in added_keys):
-            source = (
-                f"{candidate.extractor}:{candidate.media_id}"
-                if candidate.extractor and candidate.media_id
-                else candidate.url
-            )
+            source = source_identity(candidate)
             old_keys = (
                 "destination",
                 "quality",
@@ -317,12 +343,15 @@ class Store:
         row = self.db.execute("SELECT data,folder FROM transcripts WHERE job_id=?", (job_id,)).fetchone()
         return {**json.loads(row[0]), "folder": row[1]} if row else None
 
-    def search_transcripts(self, query, job_id=None, limit=200):
+    def search_transcripts(self, query, job_id=None, limit=200, words=False):
         if not query.strip():
             return []
         self.db.create_function("casefold", 1, str.casefold)
         sql = "SELECT s.*,j.candidate,j.output FROM transcript_segments s JOIN jobs j ON j.id=s.job_id WHERE j.removed=0 AND j.status='completed' AND instr(casefold(s.text),?)>0"
         args = [query.strip().casefold()]
+        if words:
+            sql = "SELECT s.*,j.candidate,j.output FROM transcript_words f JOIN transcript_segments s ON s.job_id=f.job_id AND s.ordinal=f.ordinal JOIN jobs j ON j.id=s.job_id WHERE j.removed=0 AND j.status='completed' AND transcript_words MATCH ?"
+            args = ['"' + query.strip().replace('"', '""') + '"']
         if job_id:
             sql += " AND s.job_id=?"
             args.append(job_id)

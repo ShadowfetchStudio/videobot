@@ -4,7 +4,7 @@ from PyInstaller.utils.hooks import collect_all, copy_metadata
 from pathlib import Path
 root = Path(SPECPATH).parent
 
-datas=[(str(root/"build"/"third-party-notices"), "THIRD-PARTY-NOTICES"), (str(root/"LICENSE"), ".")]; binaries=[]; hiddenimports=[]
+datas=[(str(root/"build/build-info.json"), "."),(str(root/"videobot/assets"), "videobot/assets"),(str(root/"build"/"third-party-notices"), "THIRD-PARTY-NOTICES"), (str(root/"LICENSE"), ".")]; binaries=[]; hiddenimports=[]
 for package in ('yt_dlp','yt_dlp_ejs','playwright','faster_whisper','ctranslate2'):
     d,b,h=collect_all(package); datas+=d; binaries+=b; hiddenimports+=h
 for package in ('videobot-desktop','yt-dlp','yt-dlp-ejs','playwright','PySide6-Essentials','PySide6-Addons','shiboken6','faster-whisper','ctranslate2','av','tokenizers','huggingface-hub'):
@@ -22,5 +22,5 @@ exe=EXE(pyz,a.scripts,[],exclude_binaries=True,name='VideoBot',console=False)
 coll=COLLECT(exe,a.binaries,a.datas,name='VideoBot')
 import sys
 if sys.platform=='darwin':
-    app=BUNDLE(coll,name='VideoBot.app',bundle_identifier='com.shadowfetchstudio.videobot',
-               info_plist={'CFBundleShortVersionString':'2.2.0','NSHighResolutionCapable':True})
+    app=BUNDLE(coll,name='VideoBot.app',icon=str(root/'build/VideoBot.icns'),bundle_identifier='com.shadowfetchstudio.videobot',
+               info_plist={'CFBundleShortVersionString':'2.3.0','NSHighResolutionCapable':True})

@@ -95,6 +95,22 @@ def relink(store, ids, root, cancel, emit):
             result = verify(candidate, cancel)
             if not result["ok"]:
                 raise ValueError("; ".join(result["errors"]))
+            active = store.transcript(job_id)
+            if active:
+                sidecars = Path(paths[0]) / active["folder"]
+                if (
+                    sidecars.parent != Path(paths[0])
+                    or sidecars.is_symlink()
+                    or not all(
+                        (sidecars / name).is_file() for name in ("transcript.json", "transcript.txt", "transcript.vtt")
+                    )
+                ):
+                    raise ValueError(
+                        "Active transcript files are missing. Copy the complete bundle, including transcript folders, then relink again."
+                    )
+                data = json.loads((sidecars / "transcript.json").read_text())
+                if data.get("segments") != active["segments"] or data.get("media_sha256") != active["media_sha256"]:
+                    raise ValueError("Active transcript revision does not match the library index.")
             cancel.check()
             with store.db:
                 changed = store.db.execute(
@@ -111,7 +127,7 @@ def relink(store, ids, root, cancel, emit):
     return results
 
 
-def create_clip(store, job_id, start, end, destination, cancel, emit):
+def create_clip(store, job_id, start, end, destination, cancel, emit, name=None):
     if not all(math.isfinite(t) for t in (start, end)) or not 0 <= start < end:
         raise ValueError("Clip markers must be finite, with Out after In.")
     job = completed(store, job_id)
@@ -185,7 +201,10 @@ def create_clip(store, job_id, start, end, destination, cancel, emit):
             "container": "native" if audio_only else "mp4",
             "audio_format": "m4a" if audio_only else job["options"].get("audio_format", "mp3"),
         }
-        candidate = {**job["candidate"], "title": job["candidate"]["title"] + f" — clip {start:g}–{end:g}s"}
+        candidate = {
+            **job["candidate"],
+            "title": (str(name)[:200] if name else job["candidate"]["title"] + f" — clip {start:g}–{end:g}s"),
+        }
         manifest = {
             **original,
             "job_id": new_id,
@@ -215,6 +234,12 @@ def create_clip(store, job_id, start, end, destination, cancel, emit):
                 ),
             )
         return {"job_id": new_id, "output": str(final)}
+    except Exception as exc:
+        if final.exists():
+            raise RuntimeError(
+                f"Clip retained at {final}. Use Recovery → Import verified bundles to register it. {exc}"
+            ) from exc
+        raise
     finally:
         if work.exists():
             shutil.rmtree(work)
@@ -228,7 +253,7 @@ def timestamp(seconds):
     return f"{hours:02}:{minutes:02}:{seconds:02}.{ms:03}"
 
 
-def save_transcript(store, job, segments, model, language, media_sha256, cancel):
+def save_transcript(store, job, segments, model, language, media_sha256, cancel, machine_generated=True):
     """Publish new sidecars together, then atomically replace the searchable DB index."""
     normalized = []
     for item in segments:
@@ -247,7 +272,7 @@ def save_transcript(store, job, segments, model, language, media_sha256, cancel)
         "model": model,
         "language": language,
         "media_sha256": media_sha256,
-        "machine_generated": True,
+        "machine_generated": machine_generated,
         "segments": normalized,
     }
     try:
@@ -281,6 +306,9 @@ def save_transcript(store, job, segments, model, language, media_sha256, cancel)
                 "INSERT INTO transcript_segments VALUES(?,?,?,?,?)",
                 [(job["id"], n, s["start"], s["end"], s["text"]) for n, s in enumerate(normalized)],
             )
+        pointer = root / (".active-transcript-" + token)
+        pointer.write_text(json.dumps({"folder": target.name}))
+        pointer.replace(root / "active-transcript.json")
         return str(target)
     finally:
         if temporary.exists():
@@ -322,3 +350,63 @@ def transcribe(store, job_id, model, allow_download, cancel, emit):
     digest = next(f["sha256"] for f in manifest["files"] if f["name"] == source.name)
     path = save_transcript(store, job, rows, model, info.language, digest, cancel)
     return {"job_id": job_id, "output": path, "segments": len(rows), "language": info.language}
+
+
+def transcribe_cpp(store, job_id, model_path, cancel, emit):
+    """Optional Apple Metal backend via the official whisper.cpp CLI; no model upload."""
+    import tempfile
+
+    executable = shutil.which("whisper-cli")
+    if not executable:
+        raise ValueError(
+            "Install whisper.cpp (brew install whisper-cpp), then restart VideoBot or choose its tools folder."
+        )
+    model = Path(model_path).expanduser()
+    if not model.is_file() or model.suffix != ".bin":
+        raise ValueError("Choose a local whisper.cpp GGML .bin model.")
+    job = completed(store, job_id)
+    source = checked_media(job, cancel)
+    probe = media_probe(source, cancel, audio_only=True)
+    duration = float(probe["format"].get("duration", 0))
+    if shutil.disk_usage(store.path.parent).free < duration * 32000 + 512 * 1024**2:
+        raise OSError("Insufficient space for decoded speech and a 512 MiB reserve.")
+    with tempfile.TemporaryDirectory(prefix=".speech-", dir=store.path.parent) as temp:
+        wav = Path(temp) / "audio.wav"
+        output = Path(temp) / "recognized"
+        emit("phase", phase="Preparing audio for Apple Metal transcription")
+        run_checked(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-nostdin",
+                "-i",
+                str(source),
+                "-vn",
+                "-ar",
+                "16000",
+                "-ac",
+                "1",
+                "-c:a",
+                "pcm_s16le",
+                str(wav),
+            ],
+            cancel,
+            timeout=86400,
+        )
+        emit("phase", phase="Transcribing locally with whisper.cpp (Metal requested)")
+        run_checked(
+            [executable, "-m", str(model.resolve()), "-f", str(wav), "-oj", "-of", str(output), "-l", "auto", "-np"],
+            cancel,
+            timeout=86400,
+        )
+        data = json.loads(output.with_suffix(".json").read_text())
+        rows = [
+            {"start": s["offsets"]["from"] / 1000, "end": s["offsets"]["to"] / 1000, "text": s["text"]}
+            for s in data["transcription"]
+        ]
+        _, manifest = bundle_files(job)
+        digest = next(f["sha256"] for f in manifest["files"] if f["name"] == source.name)
+        language = data.get("result", {}).get("language", "unknown")
+        path = save_transcript(store, job, rows, "whisper.cpp:" + model.name, language, digest, cancel)
+        return {"job_id": job_id, "output": path, "segments": len(rows), "language": language}

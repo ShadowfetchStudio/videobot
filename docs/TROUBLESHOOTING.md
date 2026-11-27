@@ -1,7 +1,7 @@
 # Troubleshooting
 
 - **Missing FFmpeg/ffprobe:** install FFmpeg and restart the shell/app so PATH is refreshed. Run `videobot doctor`.
-- **Chromium executable missing:** `python -m playwright install chromium` in the environment running VideoBot. Linux may also need `python -m playwright install --with-deps chromium`.
+- **Chromium executable missing:** `python -m playwright install chromium` in the environment running VideoBot. The published Mac package bundles headless Chromium.
 - **YouTube extraction warning:** check Deno/Node and EJS in Diagnostics, update yt-dlp in a controlled environment, and test again. Cookies and source restrictions may still affect availability.
 - **Strict resolution unavailable:** choose another ceiling or Best. The app refuses to silently exceed your limit.
 - **WebM/MP4 conversion failed:** the selected streams may not support that container. Choose native; use editing-compatible output for H.264/AAC conversion when wanted.
@@ -21,4 +21,15 @@ Include OS, Python/app/dependency versions, a sanitized error and whether the pr
 - Tiny/base/small run on CPU, with different speed/accuracy and memory costs. Stop cancels the supervised worker, including model loading. Keep previous transcript sidecars until you have reviewed the replacement.
 - Source installs constrain PyAV below 19 for faster-whisper 1.2.x compatibility. Use the project dependency metadata/locks rather than separately upgrading PyAV.
 
-On Linux, audio playback requires PipeWire or PulseAudio. When no PipeWire runtime socket is present, VideoBot selects Qt's PulseAudio backend to avoid a Qt 6.12 probe crash on minimal systems. An explicit `QT_AUDIO_BACKEND` choice is preserved. Video can still preview without an audio device; install/start the distribution's sound service for audible playback.
+## Apple silicon 2.3 additions
+
+- **Missing active transcript after moving a drive:** Relink now refuses an incomplete older copy. Copy the whole current bundle, including transcript folders, then retry.
+- **Clip exists on disk but is absent from Library:** Settings → Recovery / import bundles → Import verified bundles. The original clip error includes its retained path.
+- **Restore a backup:** Recovery restores into a new database/window. It does not replace the open queue.
+- **Metal transcription unavailable:** Install `whisper-cpp` through Homebrew, restart the app and choose a local GGML `.bin` model in Preview. The CPU engine remains available. The Metal checkbox does not download a model.
+- **Background queue unavailable:** Install VideoBot in Applications before enabling it. The user must remain logged in, the Mac awake and storage mounted. Configure current-session authentication in the interactive app for protected sources.
+- **Source missed by a watch:** A watch inspects at most 100 recent items per check. Use explicit discovery for backfill.
+- **Accessibility hierarchy missing after filtering:** A known macOS/Qt accessibility limitation remains. Reopen the window/app to rebuild the view. Report the app version and exact sequence; full screen-reader compatibility is not certified.
+- **Table order appears unchanged after priority edits:** Stable rows keep first-seen display order until the view is reopened; the queue engine still executes by priority and schedule.
+
+See the [current guide](MAC-2.3.md) and [release notes](releases/2.3.0.md).

@@ -8,15 +8,7 @@ permissions:
   contents: read
 jobs:
   test:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        python: ['3.12']
-        include:
-          - os: ubuntu-latest
-            python: '3.11'
-    runs-on: ${{ matrix.os }}
+    runs-on: macos-15
     timeout-minutes: 15
     env:
       QT_QPA_PLATFORM: offscreen
@@ -24,17 +16,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: ${{ matrix.python }}
-      - run: python -m pip install -e ".[dev]"
-      - name: Install media tools (Linux)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg libegl1 libxcb-cursor0
-      - name: Install media tools (macOS)
-        if: runner.os == 'macOS'
-        run: brew install ffmpeg
-      - name: Install media tools (Windows)
-        if: runner.os == 'Windows'
-        run: choco install ffmpeg -y --no-progress
+          python-version: '3.12'
+      - run: python -m pip install --require-hashes -r requirements-dev-lock.txt
+      - run: python -m pip install --no-deps --no-build-isolation -e .
+      - run: brew install ffmpeg
       - run: python -m playwright install --with-deps chromium
       - run: ruff check videobot tests
       - run: ruff format --check videobot tests run.py
@@ -43,14 +28,15 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
-          name: test-results-${{ matrix.os }}-${{ matrix.python }}
+          name: test-results-macOS-arm64-3.12
           path: test-results.xml
   dependencies:
-    runs-on: ubuntu-latest
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.12'
-      - run: python -m pip install -e . pip-audit
+      - run: python -m pip install --require-hashes -r requirements-dev-lock.txt
+      - run: python -m pip install --no-deps --no-build-isolation -e .
       - run: pip-audit

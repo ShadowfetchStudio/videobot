@@ -20,6 +20,59 @@ def task(request):
         sys.stderr = sys.stdout
     cancel = Cancellation(request.get("cancel_path"))
     try:
+        if request["action"] in ("import_bundles", "export_collection", "correct_transcript", "export_excerpts"):
+            from .recovery import import_bundles, export_collection
+            from .media_tools import completed, save_transcript, create_clip
+
+            store = Store(request.get("db"))
+            try:
+                action = request["action"]
+                if action == "import_bundles":
+                    results = import_bundles(store, request["root"], cancel, emit_stdout)
+                    failed = sum(not r["ok"] for r in results)
+                    emit_stdout(
+                        "result",
+                        status="partial" if failed else "completed",
+                        count=len(results) - failed,
+                        failed=failed,
+                    )
+                elif action == "export_collection":
+                    result = export_collection(store, request["ids"], request["destination"], cancel, emit_stdout)
+                    emit_stdout("result", status="completed", message="Collection saved: " + result)
+                elif action == "correct_transcript":
+                    job = completed(store, request["job_id"])
+                    active = store.transcript(job["id"])
+                    if not active or active["folder"] != request["revision"]:
+                        raise ValueError("Transcript changed; reopen the editor.")
+                    save_transcript(
+                        store,
+                        job,
+                        request["segments"],
+                        active["model"],
+                        active["language"],
+                        active["media_sha256"],
+                        cancel,
+                        machine_generated=False,
+                    )
+                    emit_stdout("result", status="completed", message="Reviewed transcript saved as a new revision.")
+                else:
+                    for item in request["excerpts"]:
+                        cancel.check()
+                        result = create_clip(
+                            store,
+                            request["job_id"],
+                            item["start"],
+                            item["end"],
+                            request["destination"],
+                            cancel,
+                            emit_stdout,
+                            name=item["name"],
+                        )
+                        emit_stdout("log", message=item["name"] + ": " + result["output"])
+                    emit_stdout("result", status="completed", count=len(request["excerpts"]))
+                return 0
+            finally:
+                store.close()
         if request["action"] in ("clip", "transcribe", "relink"):
             from .media_tools import create_clip, transcribe, relink
 
@@ -39,14 +92,21 @@ def task(request):
                         "result", status="completed", count=1, message="Clip saved: " + result["output"], **result
                     )
                 elif request["action"] == "transcribe":
-                    result = transcribe(
-                        store,
-                        request["job_id"],
-                        request.get("model", "tiny"),
-                        request.get("allow_download", False),
-                        cancel,
-                        emit_stdout,
-                    )
+                    if request.get("backend") == "metal":
+                        from .media_tools import transcribe_cpp
+
+                        result = transcribe_cpp(
+                            store, request["job_id"], request.get("model_path", ""), cancel, emit_stdout
+                        )
+                    else:
+                        result = transcribe(
+                            store,
+                            request["job_id"],
+                            request.get("model", "tiny"),
+                            request.get("allow_download", False),
+                            cancel,
+                            emit_stdout,
+                        )
                     emit_stdout(
                         "result",
                         status="completed",
@@ -98,6 +158,8 @@ def task(request):
         if request["action"] == "inspect":
             inspect_urls(request["urls"], Options(**request["options"]), cancel, emit_stdout)
             return 0
+        if request["action"] != "run":
+            raise ValueError("Unknown worker action")
         status = run_queue(
             request.get("db"), cancel, emit_stdout, request.get("owner"), request.get("ids"), request.get("auth")
         )

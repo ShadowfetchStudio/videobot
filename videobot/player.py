@@ -22,6 +22,11 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QSplitter,
     QWidget,
+    QInputDialog,
+    QDialogButtonBox,
+    QTableWidget,
+    QTableWidgetItem,
+    QScrollArea,
 )
 
 from .library import playable
@@ -117,7 +122,31 @@ class MediaDialog(QDialog):
         self.model.addItems(MODELS)
         self.model.setToolTip("Tiny: fastest. Base: balanced. Small: more accurate, slower. CPU only.")
         right_layout.addWidget(self.model)
+        self.metal = QCheckBox("Use Apple Metal via whisper.cpp")
+        self.metal.setToolTip(
+            "Optional: install whisper-cpp and choose a local GGML model. CPU engine stays available."
+        )
+        right_layout.addWidget(self.metal)
+        self.metal_model = QLineEdit(window.store.setting("metal_model", ""))
+        self.metal_model.setPlaceholderText("Local whisper.cpp .bin model")
+        self.metal_model.setAccessibleName("Whisper.cpp model file")
+        right_layout.addWidget(self.metal_model)
+        choose_model = QPushButton("Choose Metal model…")
+
+        def choose():
+            path, _ = QFileDialog.getOpenFileName(self, "Local GGML model", "", "GGML model (*.bin)")
+            if path:
+                self.metal_model.setText(path)
+                window.store.set_setting("metal_model", path)
+
+        choose_model.clicked.connect(choose)
+        right_layout.addWidget(choose_model)
+        self.metal.toggled.connect(lambda checked: self.model.setEnabled(not checked))
         self.allow_download = QCheckBox("Allow model download on first use")
+        self.metal.toggled.connect(lambda checked: self.allow_download.setEnabled(not checked))
+        self.metal_model.editingFinished.connect(
+            lambda: window.store.set_setting("metal_model", self.metal_model.text().strip())
+        )
         self.allow_download.setToolTip(
             "Downloads open Whisper weights from Hugging Face. Audio stays on this computer. Tiny ~75 MB; base ~145 MB; small ~485 MB."
         )
@@ -139,10 +168,22 @@ class MediaDialog(QDialog):
         self.open_transcript = QPushButton("Open TXT / VTT / JSON folder")
         self.open_transcript.clicked.connect(self.open_sidecars)
         right_layout.addWidget(self.open_transcript)
+        self.edit_transcript = QPushButton("Correct transcript…")
+        self.edit_transcript.clicked.connect(self.correct_transcript)
+        right_layout.addWidget(self.edit_transcript)
+        self.excerpt_button = QPushButton("Save named excerpt…")
+        self.excerpt_button.clicked.connect(self.save_excerpt)
+        left_layout.addWidget(self.excerpt_button)
+        self.excerpts_button = QPushButton("Export saved excerpts…")
+        self.excerpts_button.clicked.connect(self.export_excerpts)
+        left_layout.addWidget(self.excerpts_button)
         note = QLabel("Automatic transcripts can contain errors. Review them before publishing.")
         note.setWordWrap(True)
         right_layout.addWidget(note)
-        split.addWidget(right)
+        transcript_scroll = QScrollArea()
+        transcript_scroll.setWidgetResizable(True)
+        transcript_scroll.setWidget(right)
+        split.addWidget(transcript_scroll)
         split.setSizes([610, 330])
         layout.addWidget(split, 1)
         self.message = QLabel("Loading media…")
@@ -217,6 +258,9 @@ class MediaDialog(QDialog):
         self.clip_button.setEnabled(not busy and self.loaded and self.mark_out.value() > self.mark_in.value())
         self.transcribe_button.setEnabled(not busy and self.loaded)
         self.stop_button.setEnabled(busy)
+        self.edit_transcript.setEnabled(not busy and bool(self.window.store.transcript(self.job["id"])))
+        self.excerpt_button.setEnabled(not busy and self.mark_out.value() > self.mark_in.value())
+        self.excerpts_button.setEnabled(not busy and bool(self.window.store.setting("excerpts:" + self.job["id"], [])))
         if busy:
             self.message.setText(self.window.status.text())
         elif getattr(self, "was_busy", False):
@@ -250,6 +294,8 @@ class MediaDialog(QDialog):
                 "job_id": self.job["id"],
                 "model": self.model.currentText(),
                 "allow_download": self.allow_download.isChecked(),
+                "backend": "metal" if self.metal.isChecked() else "cpu",
+                "model_path": self.metal_model.text(),
             }
         )
 
@@ -265,6 +311,67 @@ class MediaDialog(QDialog):
                 item = QListWidgetItem(timestamp(segment["start"]) + "  " + segment["text"])
                 item.setData(Qt.ItemDataRole.UserRole, segment["start"])
                 self.lines.addItem(item)
+
+    def correct_transcript(self):
+        active = self.window.store.transcript(self.job["id"])
+        if not active:
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Review transcript — original revision retained")
+        dialog.resize(760, 500)
+        layout = QVBoxLayout(dialog)
+        table = QTableWidget(len(active["segments"]), 3)
+        table.setHorizontalHeaderLabels(["Start", "End", "Reviewed text"])
+        table.horizontalHeader().setStretchLastSection(True)
+        for row, segment in enumerate(active["segments"]):
+            for col, key in enumerate(("start", "end", "text")):
+                item = QTableWidgetItem(str(segment[key]))
+                if col < 2:
+                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                table.setItem(row, col, item)
+        layout.addWidget(table)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec():
+            segments = [{**segment, "text": table.item(i, 2).text()} for i, segment in enumerate(active["segments"])]
+            self.window.start_task(
+                {
+                    "action": "correct_transcript",
+                    "db": str(self.window.store.path),
+                    "job_id": self.job["id"],
+                    "revision": active["folder"],
+                    "segments": segments,
+                }
+            )
+        dialog.deleteLater()
+
+    def save_excerpt(self):
+        name, ok = QInputDialog.getText(self, "Save excerpt", "Excerpt name")
+        if ok and name.strip():
+            key = "excerpts:" + self.job["id"]
+            excerpts = self.window.store.setting(key, [])
+            excerpts.append({"name": name.strip()[:200], "start": self.mark_in.value(), "end": self.mark_out.value()})
+            self.window.store.set_setting(key, excerpts)
+            self.message.setText(f"Saved {len(excerpts)} named excerpt(s).")
+
+    def export_excerpts(self):
+        excerpts = self.window.store.setting("excerpts:" + self.job["id"], [])
+        if not excerpts:
+            return
+        folder = QFileDialog.getExistingDirectory(self, f"Export {len(excerpts)} saved excerpts")
+        if folder:
+            self.player.pause()
+            self.window.start_task(
+                {
+                    "action": "export_excerpts",
+                    "db": str(self.window.store.path),
+                    "job_id": self.job["id"],
+                    "excerpts": excerpts,
+                    "destination": folder,
+                }
+            )
 
     def open_sidecars(self):
         transcript = self.window.store.transcript(self.job["id"])
@@ -294,14 +401,17 @@ class TranscriptSearch(QDialog):
         note = QLabel("Up to 200 matches. Double-click a result to open its media at that timestamp.")
         note.setWordWrap(True)
         layout.addWidget(note)
+        word_search = QCheckBox("Indexed word / phrase search (whole words)")
+        layout.addWidget(word_search)
         timer = QTimer(self)
         timer.setSingleShot(True)
         timer.setInterval(250)
         query.textChanged.connect(lambda: timer.start())
+        word_search.toggled.connect(lambda: timer.start())
 
         def search():
             self.results.clear()
-            for row in window.store.search_transcripts(query.text()):
+            for row in window.store.search_transcripts(query.text(), words=word_search.isChecked()):
                 item = QListWidgetItem(f"{row['title']} · {timestamp(row['start'])}\n{row['text']}")
                 item.setData(Qt.ItemDataRole.UserRole, (row["job_id"], row["start"]))
                 self.results.addItem(item)

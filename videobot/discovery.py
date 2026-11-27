@@ -27,6 +27,11 @@ MEDIA_EXTENSIONS = (
     ".m4a",
     ".wav",
     ".ogg",
+    ".flac",
+    ".aac",
+    ".opus",
+    ".aiff",
+    ".aif",
 )
 MANIFEST_EXTENSIONS = (".m3u8", ".mpd")
 
@@ -40,7 +45,7 @@ SCAN = r"""() => {
  for(const attr of ['data-video-url','data-video','data-mp4','data-stream','data-file','data-video-src','data-src'])
    for(const e of document.querySelectorAll(`[${attr}]`)) {
      const value=e.getAttribute(attr);
-     if(attr !== 'data-src' || /\.(mp4|webm|m3u8|mpd)(?:[?#]|$)/i.test(value || '') || ['VIDEO','SOURCE'].includes(e.tagName)) add(value);
+     if(attr !== 'data-src' || /\.(__MEDIA_EXTENSIONS__)(?:[?#]|$)/i.test(value || '') || ['VIDEO','SOURCE'].includes(e.tagName)) add(value);
    }
  let walked=0;
  const visit = (value,depth=0) => {
@@ -56,7 +61,7 @@ SCAN = r"""() => {
  for(const a of document.querySelectorAll('a[href]')) {
    const raw=a.getAttribute('href') || ''; const href=absolute(raw);
    if(!href || raw.startsWith('#')) continue;
-   if(/\.(mp4|webm|mkv|mov|avi|flv|m4v|ogv|3gp|wmv|mpeg|mpg|mp3|m4a|wav|m3u8|mpd)(?:[?#]|$)/i.test(href)) { add(href); continue; }
+   if(/\.(__MEDIA_EXTENSIONS__)(?:[?#]|$)/i.test(href)) { add(href); continue; }
    const text=(a.textContent || '').trim();
    if(a.rel==='next' || /^(next|next page|more|load more)\s*[»›>]?$/i.test(text) || /^[»›>]$/.test(text) || /\bnext\b/i.test(a.className)) { next ||= href; continue; }
    if(new URL(href).origin !== location.origin || /\b(login|signin|signup|register|about|contact|privacy|terms|search|tag|category|author)\b/i.test(href)) continue;
@@ -68,7 +73,7 @@ SCAN = r"""() => {
  }
  const rel=document.querySelector('link[rel="next"]'); if(rel) next=absolute(rel.href);
  return {media:[...media],items,next,title:document.title};
-}"""
+}""".replace("__MEDIA_EXTENSIONS__", "|".join(ext[1:] for ext in MEDIA_EXTENSIONS + MANIFEST_EXTENSIONS))
 
 
 def origin_key(url):

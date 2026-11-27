@@ -2,9 +2,9 @@
 
 **Discover media, choose what to save, and keep a reliable download library.**
 
-VideoBot is a Python/PySide6 desktop app and headless CLI built around yt-dlp, Playwright and FFmpeg. Version 2.2 adds embedded playback, visual clip markers, verified media relinking and local speech transcription with timestamp search to the four-page download workspace.
+VideoBot is a Python/PySide6 desktop app and headless CLI built around yt-dlp, Playwright and FFmpeg. Version 2.3 focuses on Apple silicon Macs: reliable queue selection, verified recovery/import, portable collections, reviewed transcripts, saved excerpts, indexed phrase search and optional background queue runs.
 
-> Version 2.2 source and development packages. The latest published release may have an earlier version; check its release notes before downloading. See the [release audit](docs/RELEASE-AUDIT.md) and [current CI checks](https://github.com/ShadowfetchStudio/videobot/actions) for verification and platform status. Upstream website and authenticated-account behavior is not implied by local acceptance tests.
+> **Maintained platform: macOS on Apple silicon only.** Windows/Linux packages in older releases are historical and are no longer maintained. See the [2.3 guide](docs/MAC-2.3.md) for capabilities, workflows and limitations.
 
 ![VideoBot desktop preview with example fixture](docs/images/desktop.png)
 
@@ -20,12 +20,12 @@ VideoBot is a Python/PySide6 desktop app and headless CLI built around yt-dlp, P
 - Per-video folders with provenance, SHA-256 checksums, creator/title, retrieval time and rights notes.
 - Opt-in browser/cookie-file authentication for the current session; no cookies in saved profiles or exported manifests.
 - Bounded discovery, size/free-space budgets, retries and a minimum five-second cooldown after successful downloads.
-- Search/filter, selected-only runs, priorities, scheduled starts while the app is open, explicit job editing and record undo/restore.
+- Search/filter, selected-only runs, priorities, scheduled starts with the window open or an opt-in macOS background queue, explicit job editing and record undo/restore.
 - Project/tags, readable filenames, embedded playback, saved visual In/Out markers, new clip exports, checksum verification and JSON/CSV library exports.
 - Relink moved library bundles by job identity, output settings and SHA-256 verification; ambiguous matches are left unchanged.
 - Local CPU transcription (tiny/base/small Whisper), TXT/VTT/JSON sidecars, and cross-library transcript search with click-to-seek. First-use model downloads are opt-in; audio is not uploaded.
 - Saved output profiles, backup/recovery, safe partial cleanup, background diagnostics, tools-folder selection, themes and optional notifications.
-- Expanded CLI using the same engine. See the [full capability audit and workflows](docs/CAPABILITIES-AND-WORKFLOWS.md).
+- Expanded CLI using the same engine. See the [current guide](docs/MAC-2.3.md) and [historical capability audit](docs/CAPABILITIES-AND-WORKFLOWS.md).
 
 ## Desktop build downloads
 
@@ -33,23 +33,19 @@ Published versions appear on [GitHub Releases](https://github.com/ShadowfetchStu
 
 | System | Package | Installation |
 |---|---|---|
-| Windows x64 | `VideoBot-VERSION-Windows-Setup.exe` | Per-user installer; administrator access is not required. |
-| macOS Apple silicon | `VideoBot-macOS.dmg` | Open the disk image and copy VideoBot to Applications. |
-| Linux x64 | `VideoBot-Linux.tar.gz` | Extract the entire folder and run its `VideoBot` executable. |
+| macOS Apple silicon | `VideoBot-2.3.0-macOS-arm64.dmg` | Copy VideoBot to Applications. |
 
-Workflow artifacts are development builds; a published release is separately identified by its version tag and release notes. Packages bundle Python, Qt, the local speech engine and headless Chromium, but still require FFmpeg/ffprobe and a supported JavaScript runtime as described below. They are unsigned/unnotarized; verify provenance and checksums before choosing whether to run them. Intel macOS and other Linux baselines need their own build and validation.
+Workflow artifacts are development builds; a published release is separately identified by its version tag and release notes. Packages bundle Python, Qt, the local speech engine and headless Chromium, but still require FFmpeg/ffprobe and a supported JavaScript runtime as described below. The Mac application is ad-hoc signed, not Developer ID signed or notarized; verify provenance and checksums before choosing whether to run them. Intel macOS, Windows and Linux are not maintained targets.
 
 ## Install from source
 
-Use **Python 3.11 or newer** (3.12 is the primary development environment).
+Use **Python 3.12 on an Apple silicon Mac** (the tested release environment).
 
 ```sh
 git clone https://github.com/ShadowfetchStudio/videobot.git
 cd videobot
 python3 -m venv .venv
-# macOS/Linux
 source .venv/bin/activate
-# Windows PowerShell instead: .venv\Scripts\Activate.ps1
 python -m pip install -e .
 python -m playwright install chromium
 ```
@@ -57,8 +53,6 @@ python -m playwright install chromium
 Install **FFmpeg and ffprobe** and put them on PATH:
 
 - macOS: `brew install ffmpeg`
-- Debian/Ubuntu: `sudo apt install ffmpeg`
-- Windows: install a trusted FFmpeg build; verify `ffmpeg -version` and `ffprobe -version` from a fresh terminal. `winget search ffmpeg` lists available packages.
 
 On macOS, the app also searches the standard Homebrew, `~/.local/bin` and `~/.deno/bin` directories when launched from Finder, preserving any existing PATH choices.
 
@@ -112,7 +106,7 @@ Use `videobot --db /path/to/queue.sqlite3 ...` for an alternate queue. Set `VIDE
 - Generic web crawling stays on the listing origin for navigation and uses page/item/scroll budgets. A warning identifies truncated discovery. Dynamic sites may require a dedicated extractor or manual input.
 - Subtitle/thumbnail availability depends on the source. Cookie access can require OS permission and does not bypass account restrictions or DRM.
 - Fast stream-copy time ranges can align to keyframes. Accurate ranges download the full selected source and re-encode, within frame/sample timing. Editing conversion changes the encoding.
-- Scheduling requires an open app with Auto-run enabled; no background daemon or computer wake service is installed. Playback uses your OS default player.
+- Scheduling uses an open app with Auto-run enabled, or the optional background queue configured in Settings. No computer wake service is installed. Library playback uses the embedded preview; Open in player uses the OS default player.
 - See [troubleshooting](docs/TROUBLESHOOTING.md), [architecture](docs/ARCHITECTURE.md), [changelog](CHANGELOG.md) and [security](SECURITY.md).
 
 ## Contributing
@@ -136,4 +130,4 @@ videobot transcribe JOB_ID --model tiny --allow-download
 videobot search-transcripts "golden telescope"
 ```
 
-Speech uses [faster-whisper](https://github.com/SYSTRAN/faster-whisper) locally. PyAV is constrained below version 19 because faster-whisper 1.2.1 uses an API removed in PyAV 19; a real audio-decoding regression test covers compatibility. See [library workflows and limits](docs/LIBRARY-TOOLS.md).
+Speech uses [faster-whisper](https://github.com/SYSTRAN/faster-whisper) locally by default. For Apple Metal acceleration, install `whisper-cpp` with Homebrew and select a local GGML `.bin` model in Preview. This optional engine and its model are not bundled. PyAV is constrained below version 19 because faster-whisper 1.2.1 uses an API removed in PyAV 19; a real audio-decoding regression test covers compatibility. See the [current workflows and limits](docs/MAC-2.3.md).
