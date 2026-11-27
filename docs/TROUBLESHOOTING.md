@@ -29,7 +29,7 @@ Include OS, Python/app/dependency versions, a sanitized error and whether the pr
 - **Metal transcription unavailable:** Install `whisper-cpp` through Homebrew, restart the app and choose a local GGML `.bin` model in Preview. The CPU engine remains available. The Metal checkbox does not download a model.
 - **Background queue unavailable:** Install VideoBot in Applications before enabling it. The user must remain logged in, the Mac awake and storage mounted. Configure current-session authentication in the interactive app for protected sources.
 - **Source missed by a watch:** A watch inspects at most 100 recent items per check. Use explicit discovery for backfill.
-- **Accessibility hierarchy missing after filtering:** A known macOS/Qt accessibility limitation remains. Reopen the window/app to rebuild the view. Report the app version and exact sequence; full screen-reader compatibility is not certified.
-- **Table order appears unchanged after priority edits:** Stable rows keep first-seen display order until the view is reopened; the queue engine still executes by priority and schedule.
 
 See the [current guide](MAC-2.3.md) and [release notes](releases/2.3.0.md).
+
+Queue and Library display 100 items per page. Use the row checkboxes for multiple selection, or click a title to select one item. The count includes selections on other pages. Filtering intentionally clears selections that no longer match. If an accessibility crash recurs, include the exact filter/action sequence and the macOS crash report, with private data removed.

@@ -4,9 +4,9 @@ This record maps the earlier source audit to the maintained Apple silicon releas
 
 | Finding | Resolution and evidence |
 |---|---|
-| D01 filtered selection | Stable native row identities; regression verifies only the intended job remains selected. Native filter/select/clear sequence exercised. |
+| D01 filtered selection | Paged native controls with job-ID selection; regression verifies only the intended job remains selected. Native filter/select/clear sequence exercised. |
 | D02 Generic identity collisions | URL-scoped Generic identities, non-destructive migration and duplicate regression. |
-| D03 native accessibility crash | Stable rows avoid the reproduced remove/reset crash sequence. The native accessibility hierarchy can still disappear after clearing a filter. Full screen-reader qualification remains open. |
+| D03 native accessibility crash | The virtual outline candidate also crashed in final acceptance. Replaced it with paged native checkbox/label controls. Repeated filter/select/clear then passed with correct selection and a complete accessibility hierarchy. Full screen-reader qualification is separate. |
 | D04 clipped activity-log toggle | Fixed footer, bounded startup geometry and independently scrolling Settings/transcript panes. |
 | D05 audio-only height ceiling | Video ceiling applies only to video output; actual 480p-to-audio regression with a stored 360p ceiling. |
 | D06 FLAC/AAC discovery | Shared extension list for direct URLs, page links and data attributes; local real-media regression. |
@@ -26,4 +26,4 @@ This record maps the earlier source audit to the maintained Apple silicon releas
 - Source/package checks use locked dependencies and only maintain Apple silicon macOS. Earlier Windows/Linux assets are historical.
 - Packaged acceptance uses actual spoken audio, local downloads, browser inspection, embedded playback and clip export. Arbitrary authenticated websites and full assistive-technology compatibility remain outside the verified scope.
 
-The native accessibility limitation and stable first-seen display order are disclosed in the current guide and release notes.
+The final native-control design, focused regression evidence and remaining qualification boundaries are described in the current guide and release notes.

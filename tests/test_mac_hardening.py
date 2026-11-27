@@ -135,3 +135,26 @@ def test_raw_audio_links_and_audio_only_height_ceiling(media_site, tmp_path):
         "audio-ceiling", Candidate(origin + "/large.mp4", direct=True)
     )
     assert __import__("pathlib").Path(output, "manifest.json").is_file()
+
+
+def test_paged_native_controls_keep_selection_and_bound_widgets(qtbot):
+    from videobot.table import StableTable
+
+    view = StableTable(5)
+    qtbot.addWidget(view)
+    view.setHorizontalHeaderLabels(["Title", "Project", "Tags", "Folder", "ID"])
+    values = [[f"Item {i}", "", "", "/fixture", str(i)] for i in range(250)]
+    view.replace_rows(values)
+    view.selectRow(0)
+    view._change_page(1)
+    view._slots[0][1].setChecked(True)
+    assert {i.row() for i in view.selectionModel().selectedRows()} == {0, 100}
+    assert len(view._slots) == 100
+    view.replace_rows(list(reversed(values)))
+    assert {view.item(i.row(), 4).text() for i in view.selectionModel().selectedRows()} == {"0", "100"}
+    view.replace_rows([values[100]])
+    assert view.rowCount() == 1
+    assert view.selectionModel().selectedRows()[0].row() == 0
+    assert view._slots[0][1].isChecked()
+    view.replace_rows(values)
+    assert {i.row() for i in view.selectionModel().selectedRows()} == {100}

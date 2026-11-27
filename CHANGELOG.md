@@ -6,7 +6,7 @@
 - Fix filtered selection, Generic source identity collisions, audio-only ceilings, raw audio discovery, tools-path editing, schedule preservation and the clipped footer.
 - Add verified bundle recovery, portable collections with saved excerpts, transcript corrections and indexed phrase search.
 - Add optional whisper.cpp / Apple Metal transcription, background queue runs and bounded watched sources.
-- Preserve stable native table row identities to avoid the reproduced accessibility crash sequence; full screen-reader qualification remains open.
+- Replace virtual table cells with paged native checkbox controls after reproducing the accessibility crash; repeated native filter/select/clear checks then passed.
 - Package a native icon and exact source/runtime metadata; run Mac-only source and packaged checks with locked dependencies.
 
 See [release notes and validation limits](docs/releases/2.3.0.md).

@@ -227,14 +227,6 @@ class MainWindow(QMainWindow):
         self.jobs.setHorizontalHeaderLabels(
             ["Title", "Status", "Tries", "Output / error", "ID", "Priority", "Scheduled"]
         )
-        self.jobs.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self.jobs.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-        self.jobs.setColumnWidth(1, 85)
-        self.jobs.setColumnWidth(2, 50)
-        self.jobs.setColumnWidth(4, 60)
-        self.jobs.setColumnWidth(5, 140)
-        self.jobs.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.jobs.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.jobs.selectionModel().selectionChanged.connect(self.update_actions)
         q.addWidget(self.jobs)
         controls = QHBoxLayout()
@@ -267,10 +259,6 @@ class MainWindow(QMainWindow):
         lib.addWidget(self.library_summary)
         self.library = StableTable(5)
         self.library.setHorizontalHeaderLabels(["Title", "Project", "Tags", "Folder", "ID"])
-        self.library.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self.library.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-        self.library.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.library.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.library.doubleClicked.connect(lambda *_: self.play_selected())
         self.library.selectionModel().selectionChanged.connect(self.update_actions)
         lib.addWidget(self.library)
@@ -962,6 +950,9 @@ class MainWindow(QMainWindow):
     def update_actions(self, *_):
         if not hasattr(self, "library") or not hasattr(self, "rows"):
             return
+        self.library_summary.setText(
+            f"{self.library.rowCount()} saved item(s). {len(self.library.selectionModel().selectedRows())} selected. Double-click to preview, mark a clip or transcribe."
+        )
         busy = bool(self.worker and self.worker.isRunning())
         ids = set(self.selected_ids())
         selected = [r for r in self.rows if r["id"] in ids]

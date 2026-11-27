@@ -28,6 +28,6 @@ Relinking compares-and-updates the observed completed path after checking identi
 
 `recovery.py` verifies imports, active transcript identity and source hashes, restores excerpt notes, and rolls back newly registered rows if an import fails. Collection export copies real files, rejects symlinks, reverifies copied media and writes its completion marker last. Cancellation leaves a partial folder without that marker.
 
-`table.py` uses stable model row identities and hides filtered rows instead of repeatedly removing native accessibility objects. Visible order is first-seen for the lifetime of a view. This avoids the reproduced native crash sequence, but the macOS accessibility hierarchy can still omit the view after filtering; full accessibility qualification is unresolved.
+`table.py` uses an internal model for ID-based selection, with ordinary checkbox/label widgets for native presentation. It reuses at most 100 visible row controls and retains selection across pages. Filter refresh restores only still-visible IDs. No virtual native table-cell objects are tied to changing model rows. Repeated native accessibility inspection passed the former crash sequence; full screen-reader qualification remains a separate task.
 
 `background.py` creates an opt-in per-user launch agent for an installed app. The agent polls bounded watched sources and uses the same transactional queue engine. It stores no cookies, does not wake the computer, and is not enabled automatically.
