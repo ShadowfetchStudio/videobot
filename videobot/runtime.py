@@ -230,3 +230,21 @@ def terminate_process_tree(process):
             pass
     psutil.wait_procs(children, timeout=2)
     process.wait(timeout=5)
+
+
+def configure_audio_backend():
+    """Avoid Qt's PipeWire probe on minimal Linux hosts without a running service.
+
+    Qt 6.12 can crash in its probe when libpipewire is installed but client.conf
+    is absent. PulseAudio's backend safely handles an unavailable audio server.
+    Keep the user's explicit backend selection and active PipeWire sessions.
+    """
+    import os
+    import sys
+
+    if sys.platform != "linux" or os.environ.get("QT_AUDIO_BACKEND"):
+        return
+    runtime = os.environ.get("PIPEWIRE_RUNTIME_DIR") or os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+    remote = os.environ.get("PIPEWIRE_REMOTE", "pipewire-0")
+    if not (Path(runtime) / remote).exists():
+        os.environ["QT_AUDIO_BACKEND"] = "pulseaudio"

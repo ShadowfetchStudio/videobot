@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 
 from .library import playable
 from .media_tools import timestamp, MODELS
+from .runtime import configure_audio_backend
 
 
 class Timeline(QSlider):
@@ -68,6 +69,7 @@ class MediaDialog(QDialog):
         self.video = QVideoWidget()
         self.video.setMinimumSize(240, 170)
         left_layout.addWidget(self.video, 1)
+        configure_audio_backend()
         self.audio = QAudioOutput(self)
         self.audio.setVolume(0.8)
         self.player = QMediaPlayer(self)

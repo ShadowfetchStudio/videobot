@@ -1,8 +1,10 @@
 import json
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 
 import pytest
 
@@ -134,9 +136,11 @@ def test_transcription_backend_offline_policy_and_failure_atomicity(saved):
             SimpleNamespace(duration=1, language="en"),
         )
     )
+    factory = Mock(return_value=engine)
+    # Production loads PyAV/Whisper in a child, never beside Qt's FFmpeg backend.
     with (
         patch("videobot.media_tools.media_probe"),
-        patch("faster_whisper.WhisperModel", return_value=engine) as factory,
+        patch.dict(sys.modules, {"faster_whisper": SimpleNamespace(WhisperModel=factory)}),
     ):
         result = transcribe(store, job["id"], "tiny", False, Cancellation(), lambda *a, **k: None)
         assert result["segments"] == 1
@@ -144,7 +148,9 @@ def test_transcription_backend_offline_policy_and_failure_atomicity(saved):
     before = store.transcript(job["id"])
     with (
         patch("videobot.media_tools.media_probe"),
-        patch("faster_whisper.WhisperModel", side_effect=RuntimeError("no model")),
+        patch.dict(
+            sys.modules, {"faster_whisper": SimpleNamespace(WhisperModel=Mock(side_effect=RuntimeError("no model")))}
+        ),
     ):
         with pytest.raises(RuntimeError):
             transcribe(store, job["id"], "tiny", False, Cancellation(), lambda *a, **k: None)
@@ -179,7 +185,6 @@ def test_player_load_seek_and_persist_markers(saved, qtbot):
 
 def test_real_audio_decoder_compatibility(tmp_path):
     import wave
-    from faster_whisper.audio import decode_audio
 
     path = tmp_path / "silence.wav"
     with wave.open(str(path), "wb") as wav:
@@ -187,4 +192,31 @@ def test_real_audio_decoder_compatibility(tmp_path):
         wav.setsampwidth(2)
         wav.setframerate(16000)
         wav.writeframes(b"\0\0" * 16000)
-    assert len(decode_audio(str(path))) == 16000
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; from faster_whisper.audio import decode_audio; assert len(decode_audio(sys.argv[1])) == 16000",
+            str(path),
+        ],
+        check=True,
+        timeout=30,
+    )
+
+
+def test_audio_backend_fallback_preserves_explicit_and_active_services(tmp_path, monkeypatch):
+    from videobot.runtime import configure_audio_backend
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setenv("PIPEWIRE_RUNTIME_DIR", str(tmp_path))
+    monkeypatch.delenv("QT_AUDIO_BACKEND", raising=False)
+    monkeypatch.delenv("PIPEWIRE_REMOTE", raising=False)
+    configure_audio_backend()
+    assert __import__("os").environ["QT_AUDIO_BACKEND"] == "pulseaudio"
+    monkeypatch.setenv("QT_AUDIO_BACKEND", "pipewire")
+    configure_audio_backend()
+    assert __import__("os").environ["QT_AUDIO_BACKEND"] == "pipewire"
+    monkeypatch.delenv("QT_AUDIO_BACKEND")
+    (tmp_path / "pipewire-0").touch()
+    configure_audio_backend()
+    assert "QT_AUDIO_BACKEND" not in __import__("os").environ
