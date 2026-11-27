@@ -238,6 +238,10 @@ def test_diagnostics_async_and_ui_workflows(qtbot, tmp_path):
     win.search.setText("research")
     assert win.jobs.rowCount() == 1
     win.jobs.selectRow(0)
+    existing_item = win.jobs.item(0, 0)
+    win.scheduler_tick()
+    assert win.jobs.item(0, 0) is existing_item
+    assert win.selected_ids()
     win.edit_selected()
     assert win.tabs.currentIndex() == 3 and win.editing_job
     assert win.apply_edit_btn.isVisible() and win.cancel_edit_btn.isVisible()

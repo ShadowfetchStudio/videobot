@@ -704,6 +704,11 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "library"):
             return
         self.rows = self.store.rows()
+        signature = (self.rows, self.status_filter.currentText(), self.search.text(), self.library_search.text())
+        if signature == getattr(self, "_view_signature", None) and self.status_filter.currentText() != "Removed":
+            self.update_actions()
+            return
+        self._view_signature = signature
         selected = set(self.selected_ids())
         choice = self.status_filter.currentText()
         query = self.search.text().casefold()
