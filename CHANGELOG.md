@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.2.0 — Library playback and speech tools (source/development builds)
+
+- Embedded Qt media player with scrubbing, volume, persistent visual In/Out markers and immutable-source clip export.
+- Relink selected moved bundles with bounded discovery, duplicate detection, revision checks and file hashes.
+- Local faster-whisper transcription with explicit model-download opt-in, CPU execution, versioned TXT/VTT/JSON sidecars and a persistent timestamp search index.
+- Search across transcripts and open matching media at its timestamp; matching CLI commands and background cancellation.
+- Add real decoder compatibility and media operation regressions; extend packaged smoke checks to player, clipping and local transcription.
+
 ## 2.1.0 — Daily workspace
 
 - Separate Add, Queue, Library and Settings pages, search/filter, contextual controls, compact layout, themes, shortcuts and optional notifications.

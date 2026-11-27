@@ -32,3 +32,9 @@ The Desktop packages workflow builds a Windows per-user Inno Setup installer, a 
 ## Qt binding and licensing
 
 The 2.0 release uses PySide6 Essentials (Qt for Python), with LGPL-available Qt modules, in place of the original GPL/commercial PyQt binding. The project source retains its existing MIT license; dependency licenses remain applicable. See the [Qt for Python license documentation](https://doc.qt.io/qtforpython-6/licenses.html) and [PyQt licensing](https://www.riverbankcomputing.com/software/pyqt/intro). Do not remove bundled notices or prevent users from replacing compatible shared Qt libraries. The build does not bundle a system FFmpeg build.
+
+## Library feature tests
+
+`tests/test_media_tools.py` covers real clip encoding, rendered player frames, persisted markers, relink ambiguity/corruption/revision rejection, cancellation, transcript replacement/search/backup, and actual PyAV audio decoding without a model download. `scripts/package_smoke.py` additionally loads the tiny model and transcribes generated silence inside the frozen executable, exercising the bundled native speech stack and VAD. This package check requires network access for model weights. A manual/local spoken fixture is needed to assess recognition quality; the silence check does not measure it.
+
+`multiprocessing.freeze_support()` must run before Qt imports in `run.py`: model-download libraries can create a multiprocessing resource tracker which otherwise reopens the desktop app in frozen builds. Production and dev locks must both be regenerated after dependency changes.

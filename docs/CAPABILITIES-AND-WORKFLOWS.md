@@ -1,4 +1,4 @@
-# VideoBot 2.1 — capability audit and daily workflows
+# VideoBot 2.2 — capability audit and daily workflows
 
 Audit date: November 26, 2026. This describes the implementation, not a promise that every third-party website works. The evidence is the source, generated-media integration tests, desktop tests and the release checks linked in `RELEASE-AUDIT.md`.
 
@@ -10,24 +10,24 @@ It is not an editor, documentary generator, social publishing service, universal
 
 ## Full capability matrix
 
-| Area | Available in 2.1 | Practical boundary |
+| Area | Available in 2.2 | Practical boundary |
 |---|---|---|
 | Source input | Paste/drop HTTP(S) links; import UTF-8 URL files; multiple source inspection | Local media import and conversion-only jobs are not implemented. URL files are limited to 1 MiB. |
 | Site support | yt-dlp extraction for supported sites; playlists/channels; HLS/DASH; direct media; browser discovery on generic galleries | Site/account restrictions and extractor changes still apply. No guarantee for arbitrary dynamic sites. |
 | Discovery | Titles, duration, creator, thumbnail and formats when available; checkbox selection; page/item budgets | Flat playlist entries often lack full metadata. No fabricated size or quality estimate is shown. |
 | Fault isolation | A bad URL/page reports an error while remaining sources continue; successful CLI add results remain queued | Partial inspection exits nonzero in the public CLI. Redacted failed URLs may need signed queries re-entered before retry. |
 | Queue durability | SQLite WAL, atomic claims, owner/PID/start-time recovery, explicit terminal states | One sequential runner per run. Multiple processes cannot claim the same job. No distributed coordinator. |
-| Queue navigation | Search titles, sources, projects, tags and errors; status filter; separate Library | Search is local. There is no full-text transcript search. |
+| Queue navigation | Search titles, sources, projects, tags and errors; status filter; separate Library | Search is local. Separate literal phrase search covers locally generated transcripts. |
 | Queue control | Run all eligible jobs or selected IDs; retry; edit idle jobs; priority; earliest start; soft removal/restore and undo | Priority changes ordering; there is no drag reorder. GUI scheduling runs only while the app is open with Auto-run enabled. CLI `run` processes currently eligible jobs and exits. |
 | Editing queued policies | Change limits/destination/formats before retry; retain ID and attempt history | Running/completed jobs cannot be rewritten. Format-affecting changes use a new partial revision and output folder. Older files are retained. |
 | Quality and containers | Best/worst or hard 2160/1440/1080/720/480/360p ceiling; native/MP4/WebM | No suitable format means failure, not an oversized fallback. Direct files above a ceiling are rejected, not downscaled. MP4/WebM remux requires compatible codecs. |
 | Editing preparation | H.264/AAC, yuv420p, fast-start MP4 | CPU encoding, CRF 18. No GPU selection, color grading, HDR tone mapping or timeline editing. |
 | Audio | MP3, M4A/AAC, FLAC, WAV and Opus; 64–320 kbps choices for lossy formats | Lossless output cannot restore fidelity missing in a lossy source. Bitrate is irrelevant to FLAC/WAV. |
 | Clips | Start/end seconds; fast stream-copy ranges; accurate range option using re-encoding | Accurate mode fetches the full selected source before trimming. It is frame/sample constrained, not an arbitrary sub-frame editor. Stream-copy ranges can align to keyframes. |
-| Subtitles and extras | Language selection, automatic-caption opt-in, thumbnail sidecars, metadata where available | Direct media lacks a subtitle/thumbnail catalog. Automatic captions may be inaccurate. No transcription or translation service is included. |
+| Subtitles and extras | Language selection, automatic-caption opt-in, thumbnail sidecars, metadata where available | Direct media lacks a subtitle/thumbnail catalog. Automatic captions may be inaccurate. Local transcription is included; translation and speaker labeling are not. |
 | Transfer control | Retry budget, rate limit, size and free-space limits, speed/ETA when known, interruptible worker | Bandwidth is approximate per transfer, not a global machine cap. Native partials resume when supported; direct HTTP restarts safely. |
-| Library organization | Readable media filenames inside stable per-job folders; project and tag fields; searchable completed library | Project/tags organize records, not arbitrary user folders. Moving a folder outside VideoBot requires manual path repair; automatic relinking is not implemented. |
-| Playback | Open a verified manifest-listed media path in the OS default player; open output folder | No embedded streaming preview, waveform or visual in/out editor. Player/codec support comes from the installed player. |
+| Library organization | Readable media filenames inside stable per-job folders; project and tag fields; searchable completed library | Project/tags organize records, not arbitrary user folders. Select moved items and relink their new parent folder; duplicate or unverifiable bundles require correction. |
+| Playback | Embedded player, scrubbing, volume, persistent visual In/Out markers and local clip export | Saved library media only; no streaming URL player, waveform or multi-track timeline. Qt codec support varies by platform. |
 | Provenance | Creator, title, source, retrieval time, options, rights notes, chapters when supplied, file bytes and SHA-256 in each bundle | Signed URL queries are redacted in public exports. Unknown rights stay unknown. Chapters originate upstream and may not be retimed for clips. |
 | Verification and export | Background checksum/size verification; combined JSON or spreadsheet-safe source-credit CSV | Checksums detect changed/missing files relative to the manifest; they are not an independent certificate of authenticity. |
 | Maintenance | Consistent database backup including profiles; restore to a new database; selected idle-job partial inventory/cleanup | Database backups contain private retry URLs and exclude media. Completed media is never removed by record/partial cleanup. Restoration is CLI/manual, not an overwrite button. |
@@ -57,7 +57,7 @@ An exact clip is not a replacement for reviewing the final audiovisual result. I
 
 ## Workflow 4: listening copies
 
-Enable **Audio only**, choose MP3 at 192 kbps for broad compatibility, or M4A/Opus/FLAC/WAV as needed. Save a listening profile. Inspect a source you are authorized to download, queue and run. Double-click the completed Library item to launch your default player. FLAC/WAV are larger and do not improve a compressed source.
+Enable **Audio only**, choose MP3 at 192 kbps for broad compatibility, or M4A/Opus/FLAC/WAV as needed. Save a listening profile. Inspect a source you are authorized to download, queue and run. Double-click the completed Library item to open the embedded preview. FLAC/WAV are larger and do not improve a compressed source.
 
 ## Workflow 5: recover from a disk-budget failure
 
@@ -100,4 +100,4 @@ The 2.0 window had a narrow output-folder field, an always-visible long advanced
 
 Keyboard shortcuts: Ctrl+L focuses source input, Ctrl+Enter inspects, Ctrl+F focuses queue search, Escape stops an active run and disables auto-run. Standard platform copy/paste remains available. The minimum window is 840×620; table columns can be resized and output settings scroll.
 
-The most valuable next additions would be an embedded player with visual clip markers, library relinking after moving a drive, subtitle transcription/search, carefully bounded per-host concurrency, signed installers and an update-check dialog. These are future work, not hidden features. Arbitrary third-party login/DRM flows, editing timelines and automatic social posting are outside this release.
+Version 2.2 implements embedded playback, visual clip markers, verified relinking and local transcription/search; see [the new workflows](LIBRARY-TOOLS.md). Remaining opportunities include carefully bounded per-host concurrency, signed installers and an update-check dialog. These are future work, not hidden features. Arbitrary third-party login/DRM flows, editing timelines and automatic social posting are outside this release.

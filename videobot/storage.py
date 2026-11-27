@@ -74,6 +74,14 @@ class Store:
             error TEXT DEFAULT '', output TEXT DEFAULT '', owner TEXT DEFAULT '', pid INTEGER DEFAULT 0
         );
         CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS transcripts (
+            job_id TEXT PRIMARY KEY, data TEXT NOT NULL, folder TEXT NOT NULL,
+            model TEXT NOT NULL, language TEXT NOT NULL, updated REAL NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS transcript_segments (
+            job_id TEXT NOT NULL, ordinal INTEGER NOT NULL, start REAL NOT NULL,
+            end REAL NOT NULL, text TEXT NOT NULL, PRIMARY KEY(job_id,ordinal)
+        );
         """)
         with self.db:
             self.db.execute("BEGIN IMMEDIATE")
@@ -304,3 +312,23 @@ class Store:
     def set_setting(self, key, value):
         with self.db:
             self.db.execute("INSERT OR REPLACE INTO settings VALUES(?,?)", (key, json.dumps(value)))
+
+    def transcript(self, job_id):
+        row = self.db.execute("SELECT data,folder FROM transcripts WHERE job_id=?", (job_id,)).fetchone()
+        return {**json.loads(row[0]), "folder": row[1]} if row else None
+
+    def search_transcripts(self, query, job_id=None, limit=200):
+        if not query.strip():
+            return []
+        self.db.create_function("casefold", 1, str.casefold)
+        sql = "SELECT s.*,j.candidate,j.output FROM transcript_segments s JOIN jobs j ON j.id=s.job_id WHERE j.removed=0 AND j.status='completed' AND instr(casefold(s.text),?)>0"
+        args = [query.strip().casefold()]
+        if job_id:
+            sql += " AND s.job_id=?"
+            args.append(job_id)
+        sql += " ORDER BY j.created,s.ordinal LIMIT ?"
+        args.append(max(1, min(1000, limit)))
+        return [
+            {**{k: r[k] for k in r.keys() if k != "candidate"}, "title": json.loads(r["candidate"])["title"]}
+            for r in self.db.execute(sql, args)
+        ]

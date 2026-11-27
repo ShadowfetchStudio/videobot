@@ -20,6 +20,53 @@ def task(request):
         sys.stderr = sys.stdout
     cancel = Cancellation(request.get("cancel_path"))
     try:
+        if request["action"] in ("clip", "transcribe", "relink"):
+            from .media_tools import create_clip, transcribe, relink
+
+            store = Store(request.get("db"))
+            try:
+                if request["action"] == "clip":
+                    result = create_clip(
+                        store,
+                        request["job_id"],
+                        float(request["start"]),
+                        float(request["end"]),
+                        request["destination"],
+                        cancel,
+                        emit_stdout,
+                    )
+                    emit_stdout(
+                        "result", status="completed", count=1, message="Clip saved: " + result["output"], **result
+                    )
+                elif request["action"] == "transcribe":
+                    result = transcribe(
+                        store,
+                        request["job_id"],
+                        request.get("model", "tiny"),
+                        request.get("allow_download", False),
+                        cancel,
+                        emit_stdout,
+                    )
+                    emit_stdout(
+                        "result",
+                        status="completed",
+                        count=1,
+                        message=f"Transcript saved: {result['segments']} segments. Review automatic text before publishing.",
+                        **result,
+                    )
+                else:
+                    results = relink(store, request["ids"], request["root"], cancel, emit_stdout)
+                    failed = sum(not r["ok"] for r in results)
+                    emit_stdout(
+                        "result",
+                        status="partial" if failed else "completed",
+                        completed=len(results) - failed,
+                        failed=failed,
+                    )
+                    return int(bool(failed))
+                return 0
+            finally:
+                store.close()
         if request["action"] == "doctor":
             emit_stdout("diagnostics", report=diagnostics())
             emit_stdout("result", status="completed")
@@ -128,6 +175,20 @@ def main(argv=None):
     restore_db = sub.add_parser("restore-backup", help="Restore backup to a new database, never overwriting a queue")
     restore_db.add_argument("source")
     restore_db.add_argument("target")
+    clip = sub.add_parser("clip", help="Export a marked range from saved media into a new library bundle")
+    clip.add_argument("job_id")
+    clip.add_argument("start", type=float)
+    clip.add_argument("end", type=float)
+    clip.add_argument("destination")
+    transcript = sub.add_parser("transcribe", help="Transcribe saved media locally on CPU")
+    transcript.add_argument("job_id")
+    transcript.add_argument("--model", choices=["tiny", "base", "small"], default="tiny")
+    transcript.add_argument("--allow-download", action="store_true", help="Allow first-use speech model download")
+    relink = sub.add_parser("relink", help="Verify and reconnect selected bundles under a new root")
+    relink.add_argument("root")
+    relink.add_argument("ids", nargs="+")
+    search = sub.add_parser("search-transcripts", help="Find literal text in indexed transcript segments")
+    search.add_argument("query")
     internal = sub.add_parser("_task", help=argparse.SUPPRESS)
     internal.add_argument("request")
     args = parser.parse_args(argv)
@@ -136,6 +197,8 @@ def main(argv=None):
         request = json.loads(request_path.read_text(encoding="utf-8"))
         request_path.unlink()
         return task(request)
+    if args.command in ("clip", "transcribe", "relink"):
+        return task({**vars(args), "action": args.command})
     if args.command == "doctor":
         print(json.dumps(diagnostics(), indent=2))
         return 0
@@ -150,6 +213,9 @@ def main(argv=None):
             return 1
     store = Store(args.db)
     try:
+        if args.command == "search-transcripts":
+            print(json.dumps(public_data(store.search_transcripts(args.query)), indent=2, ensure_ascii=False))
+            return 0
         if args.command == "clean-partials":
             from .maintenance import staging
 
