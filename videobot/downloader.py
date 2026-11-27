@@ -50,6 +50,7 @@ def common_options(options, emit, cancel):
         "extractor_retries": options.retries,
         "progress_hooks": [hook],
         "noplaylist": True,
+        "ratelimit": options.rate_limit or None,
         "ignoreerrors": False,
         "js_runtimes": {},
     }
@@ -77,7 +78,7 @@ class Downloader:
         if shutil.disk_usage(path).free < self.options.min_free_bytes:
             raise OSError("Free space reached the configured reserve. Free space or change the destination.")
 
-    def download(self, job_id, candidate: Candidate):
+    def download(self, job_id, candidate: Candidate, revision=0):
         if not re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", job_id):
             raise ValueError("Invalid job identifier.")
         for tool in ("ffmpeg", "ffprobe"):
@@ -86,10 +87,10 @@ class Downloader:
         root = Path(self.options.destination)
         root.mkdir(parents=True, exist_ok=True)
         stage = root / ".videobot-staging" / job_id
-        work = stage / "work"
+        work = stage / (f"work-{revision}" if revision else "work")
         work.mkdir(parents=True, exist_ok=True)
         self.budget(root)
-        final = root / ("VideoBot-" + job_id)
+        final = root / ("VideoBot-" + job_id + (f"-r{revision}" if revision else ""))
         # A previous process may have finalized before its queue commit. Recover only our exact manifest.
         if final.exists():
             manifest_path = final / "manifest.json"
@@ -150,12 +151,24 @@ class Downloader:
             # This directory belongs exclusively to this job, never to a pre-existing user file.
             shutil.rmtree(ready)
         ready.mkdir()
+        title = info.get("title") or candidate.title or "media"
+        safe_title = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", title).strip(" .")[:100] or "media"
+        if safe_title.split(".")[0].upper() in {
+            "CON",
+            "PRN",
+            "AUX",
+            "NUL",
+            *(f"COM{i}" for i in range(10)),
+            *(f"LPT{i}" for i in range(10)),
+        }:
+            safe_title = "media-" + safe_title
+        published_name = safe_title + media.suffix
         # Hard links avoid doubling large validated files on the same filesystem.
         try:
-            os.link(media, ready / media.name)
+            os.link(media, ready / published_name)
         except OSError:
             # Some network/exFAT destinations do not support hard links.
-            with media.open("rb") as source, (ready / media.name).open("xb") as target:
+            with media.open("rb") as source, (ready / published_name).open("xb") as target:
                 while block := source.read(1024 * 1024):
                     self.budget(root)
                     target.write(block)
@@ -338,9 +351,15 @@ class Downloader:
             opts["merge_output_format"] = self.options.container
         if self.options.embed_metadata:
             opts["postprocessors"].append({"key": "FFmpegMetadata"})
-        if self.options.audio_only:
-            opts["postprocessors"].append({"key": "FFmpegExtractAudio", "preferredcodec": "mp3"})
-        if self.options.segment_start is not None:
+        if self.options.audio_only and not (self.options.accurate_range and self.options.segment_start is not None):
+            opts["postprocessors"].append(
+                {
+                    "key": "FFmpegExtractAudio",
+                    "preferredcodec": self.options.audio_format,
+                    "preferredquality": str(self.options.audio_bitrate),
+                }
+            )
+        if self.options.segment_start is not None and not self.options.accurate_range:
             opts["download_ranges"] = download_range_func(
                 None, [(self.options.segment_start, self.options.segment_end)]
             )
@@ -439,6 +458,10 @@ class Downloader:
                                 self.budget(work, received + len(block))
                                 out.write(block)
                                 received += len(block)
+                                if self.options.rate_limit:
+                                    pause = received / self.options.rate_limit - (time.monotonic() - started)
+                                    if pause > 0:
+                                        self.cancel.wait(pause)
                                 now = time.monotonic()
                                 if now - last > 0.15:
                                     speed = received / max(0.01, now - started)
@@ -457,7 +480,11 @@ class Downloader:
                     probe = media_probe(partial, self.cancel, audio_only=self.options.audio_only)
                     formats = probe.get("format", {}).get("format_name", "")
                     ext = (
-                        "mp4"
+                        "mov"
+                        if probe.get("format", {}).get("tags", {}).get("major_brand", "").strip() == "qt"
+                        else "m4a"
+                        if "mp4" in formats and not any(s.get("codec_type") == "video" for s in probe["streams"])
+                        else "mp4"
                         if "mp4" in formats
                         else "webm"
                         if "webm" in formats and urlsplit(candidate.url).path.lower().endswith(".webm")
@@ -498,54 +525,63 @@ class Downloader:
             self.budget(work, sum(p.stat().st_size for p in work.rglob("*") if p.is_file()))
 
         # yt-dlp already applies ranges; direct transfers need the same contract.
-        if self._direct_source and self.options.segment_start is not None:
-            target = work / ("segment" + media.suffix)
-            run_checked(
-                [
-                    "ffmpeg",
-                    "-v",
-                    "error",
-                    "-nostdin",
-                    "-y",
-                    "-ss",
-                    str(self.options.segment_start),
-                    "-i",
-                    str(media),
-                    "-t",
-                    str(self.options.segment_end - self.options.segment_start),
+        if (self._direct_source or self.options.accurate_range) and self.options.segment_start is not None:
+            precise = self.options.accurate_range
+            target = work / ("segment.mp4" if precise and not self.options.audio_only else "segment" + media.suffix)
+            codec = (
+                ["-vn", "-c:a", "pcm_s16le"]
+                if self.options.audio_only
+                else [
                     "-map",
-                    "0",
-                    "-c",
-                    "copy",
-                    str(target),
-                ],
-                self.cancel,
-                timeout=3600,
-                guard=guard,
-            )
-            media = target
-        if self.options.audio_only and media.suffix != ".mp3":
-            target = work / "audio.mp3"
-            run_checked(
-                [
-                    "ffmpeg",
-                    "-v",
-                    "error",
-                    "-nostdin",
-                    "-y",
-                    "-i",
-                    str(media),
-                    "-vn",
+                    "0:v:0",
+                    "-map",
+                    "0:a?",
+                    "-c:v",
+                    "libx264",
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-crf",
+                    "18",
                     "-c:a",
-                    "libmp3lame",
-                    "-q:a",
-                    "2",
-                    str(target),
-                ],
-                self.cancel,
-                timeout=3600,
-                guard=guard,
+                    "aac",
+                ]
             )
+            if precise and self.options.audio_only:
+                target = work / "segment.wav"
+            command = [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-nostdin",
+                "-y",
+                "-ss",
+                str(self.options.segment_start),
+                "-i",
+                str(media),
+                "-t",
+                str(self.options.segment_end - self.options.segment_start),
+            ]
+            command += codec if precise else ["-map", "0", "-c", "copy"]
+            run_checked(command + [str(target)], self.cancel, timeout=7200, guard=guard)
+            media = target
+        if self.options.audio_only and (media.suffix != "." + self.options.audio_format or self._direct_source):
+            target = work / ("audio." + self.options.audio_format)
+            codecs = {"mp3": "libmp3lame", "m4a": "aac", "flac": "flac", "wav": "pcm_s16le", "opus": "libopus"}
+            command = [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-nostdin",
+                "-y",
+                "-i",
+                str(media),
+                "-vn",
+                "-c:a",
+                codecs[self.options.audio_format],
+            ]
+            if self.options.audio_format in ("mp3", "m4a", "opus"):
+                command += ["-b:a", f"{self.options.audio_bitrate}k"]
+            run_checked(command + [str(target)], self.cancel, timeout=3600, guard=guard)
             return target
         if self.options.editing_compatible:
             target = work / "editing.mp4"

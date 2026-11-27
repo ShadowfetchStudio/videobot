@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.1.0 — Daily workspace
+
+- Separate Add, Queue, Library and Settings pages, search/filter, contextual controls, compact layout, themes, shortcuts and optional notifications.
+- Edit idle jobs; priority, earliest-start scheduling, selected-only runs, soft removal/restore and undo.
+- Project/tags, readable media names, default-player playback, background checksum checks, JSON/CSV credits, backup/restore and scoped partial cleanup.
+- MP3/M4A/FLAC/WAV/Opus, bitrate selection, 1440p, accurate ranges and bandwidth controls; matching CLI options.
+- Fix thumbnail reply lifetime, recovery ownership race, SQLite sidecar modes, nested signed-link export leakage, fault-isolated discovery, QuickTime identification, retry policy editing and UI-blocking diagnostics.
+- Package dependency lock, refreshed capability/workflow audit and regression tests.
+
+
 ## 2.0.0 — November 26, 2026 (source and CI packages)
 
 - Replace the gallery-only loop with native single/playlist/channel inspection and bounded generic discovery.

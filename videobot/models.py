@@ -1,5 +1,7 @@
 """Serializable boundaries shared by the desktop app, CLI and worker process."""
 
+import math
+
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
@@ -22,6 +24,12 @@ class Options:
     quality: str = "best"
     container: str = "native"
     audio_only: bool = False
+    audio_format: str = "mp3"
+    audio_bitrate: int = 192
+    accurate_range: bool = False
+    rate_limit: int = 0
+    project: str = ""
+    tags: str = ""
     subtitles: str = ""
     automatic_subtitles: bool = False
     thumbnail: bool = False
@@ -40,9 +48,21 @@ class Options:
     rights_notes: str = "Unknown — verify rights before reuse."
 
     def validate(self):
+        for name in ("cooldown", "max_bytes", "min_free_bytes", "rate_limit", "segment_start", "segment_end"):
+            value = getattr(self, name)
+            if value is not None and not math.isfinite(value):
+                raise ValueError(f"{name} must be finite.")
         self.destination = str(Path(self.destination).expanduser().resolve())
-        if self.quality not in ("best", "worst", "2160", "1080", "720", "480", "360"):
+        if self.quality not in ("best", "worst", "2160", "1440", "1080", "720", "480", "360"):
             raise ValueError("Unsupported quality setting.")
+        if self.audio_format not in ("mp3", "m4a", "flac", "wav", "opus"):
+            raise ValueError("Unsupported audio format.")
+        if self.audio_bitrate not in (64, 96, 128, 192, 256, 320) or self.rate_limit < 0:
+            raise ValueError("Invalid audio bitrate or bandwidth limit.")
+        if len(self.project) > 120 or len(self.tags) > 500:
+            raise ValueError("Project is limited to 120 characters; tags to 500.")
+        if self.accurate_range and self.container == "webm" and not self.audio_only:
+            raise ValueError("Accurate video ranges use H.264 MP4. Choose native or MP4.")
         if self.container not in ("native", "mp4", "webm"):
             raise ValueError("Unsupported container.")
         if not 1 <= self.max_pages <= 10000 or not 1 <= self.max_items <= 100000:

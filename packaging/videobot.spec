@@ -23,4 +23,4 @@ coll=COLLECT(exe,a.binaries,a.datas,name='VideoBot')
 import sys
 if sys.platform=='darwin':
     app=BUNDLE(coll,name='VideoBot.app',bundle_identifier='com.shadowfetchstudio.videobot',
-               info_plist={'CFBundleShortVersionString':'2.0.0','NSHighResolutionCapable':True})
+               info_plist={'CFBundleShortVersionString':'2.1.0','NSHighResolutionCapable':True})

@@ -8,7 +8,7 @@ from yt_dlp.extractor import gen_extractor_classes
 
 from .downloader import common_options
 from .models import Candidate, normalize_url
-from .runtime import redact
+from .runtime import Cancelled, redact
 
 MEDIA_EXTENSIONS = (
     ".mp4",
@@ -117,6 +117,7 @@ class Discovery:
         self.seen = set()
         self.items = []
         self.cookies = []
+        self.errors = []
 
     def add(self, candidate):
         if not candidate:
@@ -130,20 +131,31 @@ class Discovery:
     def inspect(self, urls):
         for raw in urls:
             self.cancel.check()
-            url = normalize_url(raw)
-            if len(self.items) >= self.options.max_items:
-                self.emit("log", level="warning", message="Item budget reached; discovery is truncated.")
-                break
-            path = urlsplit(url).path.lower()
-            if path.endswith(MEDIA_EXTENSIONS):
-                self.add(Candidate(url, path.rsplit("/", 1)[-1], direct=True))
-            elif is_native(url) or path.endswith(MANIFEST_EXTENSIONS):
-                self._native(url)
-            else:
-                self._browser(url)
+            try:
+                url = normalize_url(raw)
+                if len(self.items) >= self.options.max_items:
+                    self.emit("log", level="warning", message="Item budget reached; discovery is truncated.")
+                    break
+                path = urlsplit(url).path.lower()
+                if path.endswith(MEDIA_EXTENSIONS):
+                    self.add(Candidate(url, path.rsplit("/", 1)[-1], direct=True))
+                elif is_native(url) or path.endswith(MANIFEST_EXTENSIONS):
+                    self._native(url)
+                else:
+                    self._browser(url)
+            except Cancelled:
+                raise
+            except Exception as exc:
+                self.failure(raw, exc)
         if len(self.items) >= self.options.max_items:
             self.emit("log", level="warning", message="Item budget reached; inspect another batch to continue.")
         return self.items
+
+    def failure(self, url, exc):
+        self.cancel.check()
+        error = {"url": redact(url), "message": redact(exc)}
+        self.errors.append(error)
+        self.emit("discovery_error", **error)
 
     def _native(self, url):
         opts = common_options(self.options, self.emit, self.cancel)
@@ -213,87 +225,95 @@ class Discovery:
                     if current in visited:
                         continue
                     visited.add(current)
-                    if is_native(current):
-                        self._native(current)
-                        continue
-                    self.emit("log", message="Inspecting " + redact(current))
-                    response = page.goto(current, wait_until="domcontentloaded", timeout=15000)
-                    if response and response.status >= 400:
-                        raise RuntimeError(f"Listing returned HTTP {response.status}")
-                    if origin_key(page.url) != origin:
-                        self.emit(
-                            "log", level="warning", message="Skipped navigation redirect outside the collection domain."
-                        )
-                        continue
                     pages += 1
-                    previous = None
-                    stable = 0
-                    # Bounded adaptive scroll; completion depends on stable discoveries, not a six-scroll assumption.
-                    for _ in range(30):
-                        self.cancel.check()
-                        data = page.evaluate(SCAN)
-                        fingerprint = (tuple(data["media"]), tuple(i["url"] for i in data["items"]))
-                        stable = stable + 1 if fingerprint == previous else 0
-                        previous = fingerprint
-                        if stable >= 3:
-                            break
-                        page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                        self.cancel.wait(0.4)
-                    else:
-                        self.emit(
-                            "log", level="warning", message="Scroll budget reached; this page may have more items."
-                        )
-                    button_rounds = 0
-                    while True:
-                        self.cancel.check()
-                        data = page.evaluate(SCAN)
-                        for src in data["media"]:
-                            direct = urlsplit(src).path.lower().endswith(MEDIA_EXTENSIONS) and not is_native(src)
-                            self.add(Candidate(src, data["title"], referer=current, direct=direct))
-                        # If this is a detail page, avoid collecting its recommended-video cards.
-                        if not data["media"]:
-                            for item in data["items"]:
-                                target = normalize_url(item["url"])
-                                if target not in visited and target not in pending:
-                                    pending.append(target)
-                        next_url = data["next"]
-                        if next_url and origin_key(urljoin(current, next_url)) == origin:
-                            target = normalize_url(urljoin(current, next_url))
-                            if target not in visited and target not in pending:
-                                pending.append(target)
-                        if next_url or len(self.items) >= self.options.max_items or pages >= self.options.max_pages:
-                            break
-                        button = page.get_by_role(
-                            "button", name=re.compile(r"^(next(?: page)?|load more|more)\s*[›»>]?$", re.I)
-                        ).first
-                        if not button.count() or not button.is_visible() or not button.is_enabled():
-                            break
-                        before = (tuple(data["media"]), tuple(i["url"] for i in data["items"]))
-                        button.click()
-                        self.cancel.wait(0.7)
+                    try:
+                        if is_native(current):
+                            self._native(current)
+                            continue
+                        self.emit("log", message="Inspecting " + redact(current))
+                        response = page.goto(current, wait_until="domcontentloaded", timeout=15000)
+                        if response and response.status >= 400:
+                            raise RuntimeError(f"Listing returned HTTP {response.status}")
                         if origin_key(page.url) != origin:
                             self.emit(
                                 "log",
                                 level="warning",
-                                message="Stopped a pagination redirect outside the collection domain.",
+                                message="Skipped navigation redirect outside the collection domain.",
                             )
-                            break
-                        if normalize_url(page.url) != current:
-                            target = normalize_url(page.url)
-                            if target in visited:
+                            continue
+                        previous = None
+                        stable = 0
+                        # Bounded adaptive scroll; completion depends on stable discoveries, not a six-scroll assumption.
+                        for _ in range(30):
+                            self.cancel.check()
+                            data = page.evaluate(SCAN)
+                            fingerprint = (tuple(data["media"]), tuple(i["url"] for i in data["items"]))
+                            stable = stable + 1 if fingerprint == previous else 0
+                            previous = fingerprint
+                            if stable >= 3:
                                 break
-                            visited.add(target)
-                            current = target
-                        updated = page.evaluate(SCAN)
-                        after = (tuple(updated["media"]), tuple(i["url"] for i in updated["items"]))
-                        if before == after:
+                            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                            self.cancel.wait(0.4)
+                        else:
                             self.emit(
-                                "log", level="warning", message="Pagination button produced no new items; stopped."
+                                "log", level="warning", message="Scroll budget reached; this page may have more items."
                             )
-                            break
-                        pages += 1
-                        button_rounds += 1
-                    self.cookies = ctx.cookies()
+                        button_rounds = 0
+                        while True:
+                            self.cancel.check()
+                            data = page.evaluate(SCAN)
+                            for src in data["media"]:
+                                direct = urlsplit(src).path.lower().endswith(MEDIA_EXTENSIONS) and not is_native(src)
+                                self.add(Candidate(src, data["title"], referer=current, direct=direct))
+                            # If this is a detail page, avoid collecting its recommended-video cards.
+                            if not data["media"]:
+                                for item in data["items"]:
+                                    target = normalize_url(item["url"])
+                                    if target not in visited and target not in pending:
+                                        pending.append(target)
+                            next_url = data["next"]
+                            if next_url and origin_key(urljoin(current, next_url)) == origin:
+                                target = normalize_url(urljoin(current, next_url))
+                                if target not in visited and target not in pending:
+                                    pending.append(target)
+                            if next_url or len(self.items) >= self.options.max_items or pages >= self.options.max_pages:
+                                break
+                            button = page.get_by_role(
+                                "button", name=re.compile(r"^(next(?: page)?|load more|more)\s*[›»>]?$", re.I)
+                            ).first
+                            if not button.count() or not button.is_visible() or not button.is_enabled():
+                                break
+                            before = (tuple(data["media"]), tuple(i["url"] for i in data["items"]))
+                            button.click()
+                            self.cancel.wait(0.7)
+                            if origin_key(page.url) != origin:
+                                self.emit(
+                                    "log",
+                                    level="warning",
+                                    message="Stopped a pagination redirect outside the collection domain.",
+                                )
+                                break
+                            if normalize_url(page.url) != current:
+                                target = normalize_url(page.url)
+                                if target in visited:
+                                    break
+                                visited.add(target)
+                                current = target
+                            updated = page.evaluate(SCAN)
+                            after = (tuple(updated["media"]), tuple(i["url"] for i in updated["items"]))
+                            if before == after:
+                                self.emit(
+                                    "log", level="warning", message="Pagination button produced no new items; stopped."
+                                )
+                                break
+                            pages += 1
+                            button_rounds += 1
+                        self.cookies = ctx.cookies()
+                    except Cancelled:
+                        raise
+                    except Exception as exc:
+                        self.failure(current, exc)
+
                 if pending or pages >= self.options.max_pages:
                     self.emit(
                         "log",
