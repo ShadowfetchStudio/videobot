@@ -45,3 +45,5 @@ Keep native speech libraries in worker processes rather than importing PyAV besi
 ## Release procedure
 
 Commit a clean source tree, run locked tests and dependency audit, then build. `build/build-info.json` records the commit, architecture, runtime versions and dirty state inside the app. Run `python scripts/package_smoke.py`, verify the ad-hoc signature and arm64 executable, build the DMG, compute SHA-256, then publish a matching version tag and accurate release notes. Source CI, packaged workflow artifacts and public GitHub releases are distinct states. Native walkthroughs still matter: see [known accessibility limits](MAC-2.3.md).
+
+The packaging job sets `PLAYWRIGHT_BROWSERS_PATH=0` for both installation and tests so the same bundled Chromium is found in a clean runner. A manual Desktop packages run accepts `source_ref` to validate an existing release tag using the current workflow without moving the tag. Its embedded build metadata must identify the requested source commit.
