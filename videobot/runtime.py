@@ -78,6 +78,21 @@ def redact(text):
     return text[:4000]
 
 
+def public_data(value):
+    """Recursively sanitize strings at public log/export boundaries."""
+    if isinstance(value, dict):
+        return {
+            key: public_data(item)
+            for key, item in value.items()
+            if key.lower() not in {"cookie_file", "cookie_browser", "password", "authorization", "cookies"}
+        }
+    if isinstance(value, list):
+        return [public_data(item) for item in value]
+    if isinstance(value, str):
+        return redact(value)
+    return value
+
+
 def emit_stdout(kind, **data):
     print(json.dumps({"type": kind, **data}, ensure_ascii=True), flush=True)
 
@@ -112,7 +127,7 @@ def diagnostics():
         from playwright.sync_api import sync_playwright
 
         with sync_playwright() as pw:
-            browser = pw.chromium.launch(headless=True)
+            browser = pw.chromium.launch(headless=True, timeout=15000)
             browser.close()
             result["chromium"] = True
     except Exception:

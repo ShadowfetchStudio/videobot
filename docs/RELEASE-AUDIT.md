@@ -1,4 +1,33 @@
-# VideoBot 2.0 release audit
+# VideoBot 2.1 release audit
+
+## Everyday workspace — November 26, 2026
+
+Local acceptance: **55 tests pass** on macOS, including real audio conversions in five formats, precise video clips, checksum tampering, mixed-source discovery, queued-policy editing, scheduling/priority, backup recovery, safe cleanup and responsive desktop diagnostics. Ruff passes. The macOS package passes actual GUI startup/shutdown, bundled browser inspection and a native download. Python wheel/sdist and dependency audit are checked separately in the release workflow.
+
+All eight reproduced 2.0 re-audit defects have regressions:
+
+| Finding | Repair and evidence |
+|---|---|
+| R01 stale thumbnail reply | Clear ownership before abort; ignore obsolete callback; thumbnail selection/deferred-delete regression |
+| R02 recovery race | Compare owner, PID and process creation time in the update; interleaved reclaim regression |
+| R03 readable SQLite sidecars | Precreate database mode 0600 before WAL creation, repair existing sidecar modes; umask regression on POSIX. Windows uses application-data ACLs. |
+| R04 signed thumbnail/format leakage | Recursive public-data redaction for CLI/library/support exports; nested fake-token regression |
+| R05 one broken source aborts batch | Per-input and per-page isolation, explicit partial status, preserve successful additions; real HTTP 404 gallery and CLI regression |
+| R06 MOV saved as MP4 | Recognize QuickTime major brand before the shared MP4 demuxer list; real QTRLE/MOV metadata regression |
+| R07 retry ignores revised budgets | Explicit idle-job editing, output-policy revision staging and immutable active jobs; edit/retry regression |
+| R08 diagnostics blocks UI | Supervised background diagnostic process with cancellation; event-loop responsiveness test |
+
+The GUI was reviewed at 1240×860 and 900×680. Add, Queue, Library and Settings now separate the primary workflows; destination width, empty guidance, action states, log visibility and recovery controls are improved. Full supported capabilities, limits and seven examples are in [Capabilities and workflows](CAPABILITIES-AND-WORKFLOWS.md).
+
+### Release gates
+
+The final PR revision must pass [source/dependency checks](https://github.com/ShadowfetchStudio/videobot/actions/workflows/ci.yml) and [packaged execution on all three OS families](https://github.com/ShadowfetchStudio/videobot/actions/workflows/build.yml) before merge. Published packages are listed on [GitHub Releases](https://github.com/ShadowfetchStudio/videobot/releases), with their own checksum files. A prior local pass is not evidence that a later revision passed CI.
+
+No authenticated third-party account was exercised. The runtime cannot guarantee every remote site, rights clearance or editorial correctness. External FFmpeg/ffprobe and JS runtime dependencies remain. Packages remain unsigned/unnotarized. Playback opens the default player; scheduling requires the app to remain open, and the release button opens the official release page rather than installing an update.
+
+---
+
+# Historical VideoBot 2.0 release audit
 
 ## Local second audit — November 26, 2026
 

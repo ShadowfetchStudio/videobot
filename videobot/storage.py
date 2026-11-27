@@ -24,10 +24,45 @@ def data_dir() -> Path:
     return Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local/share"))) / "videobot"
 
 
+def output_identity(candidate, options):
+    source = (
+        f"{candidate.extractor}:{candidate.media_id}" if candidate.extractor and candidate.media_id else candidate.url
+    )
+    keys = (
+        "destination",
+        "quality",
+        "container",
+        "audio_only",
+        "audio_format",
+        "audio_bitrate",
+        "subtitles",
+        "automatic_subtitles",
+        "thumbnail",
+        "embed_metadata",
+        "editing_compatible",
+        "segment_start",
+        "segment_end",
+        "accurate_range",
+        "project",
+    )
+    return hashlib.sha256(
+        json.dumps([source, {k: options.public_dict()[k] for k in keys}], sort_keys=True).encode()
+    ).hexdigest()
+
+
 class Store:
     def __init__(self, path=None):
         self.path = Path(path) if path else data_dir() / "queue.sqlite3"
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        # Restrict the database before SQLite creates WAL/SHM from its mode.
+        fd = os.open(self.path, os.O_CREAT | os.O_RDWR, 0o600)
+        os.close(fd)
+        if os.name != "nt":
+            self.path.chmod(0o600)
+            for suffix in ("-wal", "-shm"):
+                auxiliary = Path(str(self.path) + suffix)
+                if auxiliary.exists():
+                    auxiliary.chmod(0o600)
         self.db = sqlite3.connect(self.path, timeout=30)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
@@ -45,6 +80,14 @@ class Store:
             columns = {r[1] for r in self.db.execute("PRAGMA table_info(jobs)")}
             if "process_created" not in columns:
                 self.db.execute("ALTER TABLE jobs ADD COLUMN process_created REAL DEFAULT 0")
+            for name, declaration in {
+                "priority": "INTEGER DEFAULT 0",
+                "not_before": "REAL DEFAULT 0",
+                "removed": "INTEGER DEFAULT 0",
+                "revision": "INTEGER DEFAULT 0",
+            }.items():
+                if name not in columns:
+                    self.db.execute(f"ALTER TABLE jobs ADD COLUMN {name} {declaration}")
         try:
             self.path.chmod(0o600)
         except OSError:
@@ -56,26 +99,42 @@ class Store:
     def add(self, candidate: Candidate, options: Options):
         options.validate()
         candidate.url = normalize_url(candidate.url)
-        source = (
-            f"{candidate.extractor}:{candidate.media_id}"
-            if candidate.extractor and candidate.media_id
-            else candidate.url
-        )
-        output_keys = (
-            "destination",
-            "quality",
-            "container",
-            "audio_only",
-            "subtitles",
-            "automatic_subtitles",
-            "thumbnail",
-            "embed_metadata",
-            "editing_compatible",
-            "segment_start",
-            "segment_end",
-        )
-        output_options = {key: options.public_dict()[key] for key in output_keys}
-        identity = hashlib.sha256(json.dumps([source, output_options], sort_keys=True).encode()).hexdigest()
+        identity = output_identity(candidate, options)
+        identities = [identity]
+        # Recognize 2.0 identities without scanning or rewriting the entire library.
+        defaults = Options()
+        added_keys = ("audio_format", "audio_bitrate", "accurate_range", "project")
+        if all(getattr(options, k) == getattr(defaults, k) for k in added_keys):
+            source = (
+                f"{candidate.extractor}:{candidate.media_id}"
+                if candidate.extractor and candidate.media_id
+                else candidate.url
+            )
+            old_keys = (
+                "destination",
+                "quality",
+                "container",
+                "audio_only",
+                "subtitles",
+                "automatic_subtitles",
+                "thumbnail",
+                "embed_metadata",
+                "editing_compatible",
+                "segment_start",
+                "segment_end",
+            )
+            identities.append(
+                hashlib.sha256(
+                    json.dumps([source, {k: options.public_dict()[k] for k in old_keys}], sort_keys=True).encode()
+                ).hexdigest()
+            )
+        found = self.db.execute(
+            "SELECT id,removed FROM jobs WHERE identity IN (" + ",".join("?" for _ in identities) + ")", identities
+        ).fetchone()
+        if found:
+            if found["removed"]:
+                self.restore([found["id"]])
+            return found["id"], False
         job_id = uuid.uuid4().hex
         now = time.time()
         with self.db:
@@ -94,8 +153,62 @@ class Store:
         row = self.db.execute("SELECT id FROM jobs WHERE identity=?", (identity,)).fetchone()
         return row["id"], row["id"] == job_id
 
-    def rows(self):
-        return [self._decode(r) for r in self.db.execute("SELECT * FROM jobs ORDER BY created")]
+    def rows(self, include_removed=False):
+        where = "" if include_removed else " WHERE removed=0"
+        return [
+            self._decode(r) for r in self.db.execute("SELECT * FROM jobs" + where + " ORDER BY priority DESC, created")
+        ]
+
+    def edit(self, job_id, options):
+        """Explicitly update an idle job; invalidate partials only when output policy changes."""
+        options.validate()
+        with self.db:
+            self.db.execute("BEGIN IMMEDIATE")
+            row = self.db.execute("SELECT * FROM jobs WHERE id=? AND removed=0", (job_id,)).fetchone()
+            if not row or row["status"] not in ("queued", "failed", "cancelled"):
+                raise ValueError("Only queued, failed or cancelled jobs can be edited.")
+            job = self._decode(row)
+            candidate = Candidate(**job["candidate"])
+            identity = output_identity(candidate, options)
+            changed = identity != output_identity(candidate, Options(**job["options"]))
+            try:
+                self.db.execute(
+                    "UPDATE jobs SET options=?,identity=?,revision=revision+?,updated=? WHERE id=?",
+                    (json.dumps(options.public_dict()), identity, int(changed), time.time(), job_id),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise ValueError("Another job already uses this source and output policy.") from exc
+
+    def organize(self, ids, priority=None, not_before=None):
+        if priority is not None and not -100 <= priority <= 100:
+            raise ValueError("Priority must be between -100 and 100.")
+        if not_before is not None and not 0 <= not_before < 32503680000:
+            raise ValueError("Invalid scheduled time.")
+        with self.db:
+            for job_id in ids:
+                if priority is not None:
+                    self.db.execute(
+                        "UPDATE jobs SET priority=?,updated=? WHERE id=? AND status!='running'",
+                        (priority, time.time(), job_id),
+                    )
+                if not_before is not None:
+                    self.db.execute(
+                        "UPDATE jobs SET not_before=?,updated=? WHERE id=? AND status IN ('queued','failed','cancelled')",
+                        (not_before, time.time(), job_id),
+                    )
+
+    def backup(self, target):
+        target = Path(target).expanduser().resolve()
+        if target == self.path.resolve() or target.exists():
+            raise ValueError("Choose a new backup filename.")
+        fd = os.open(target, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+        os.close(fd)
+        destination = sqlite3.connect(target)
+        try:
+            self.db.backup(destination)
+        finally:
+            destination.close()
+        return str(target)
 
     @staticmethod
     def _decode(row):
@@ -107,14 +220,14 @@ class Store:
     def claim(self, owner, ids=None):
         with self.db:
             self.db.execute("BEGIN IMMEDIATE")
-            sql = "SELECT * FROM jobs WHERE status='queued'"
-            args = []
+            sql = "SELECT * FROM jobs WHERE status='queued' AND removed=0 AND not_before<=?"
+            args = [time.time()]
             if ids is not None:
                 if not ids:
                     return None
                 sql += " AND id IN (" + ",".join("?" for _ in ids) + ")"
                 args.extend(ids)
-            row = self.db.execute(sql + " ORDER BY created LIMIT 1", args).fetchone()
+            row = self.db.execute(sql + " ORDER BY priority DESC, created LIMIT 1", args).fetchone()
             if row is None:
                 return None
             self.db.execute(
@@ -142,7 +255,7 @@ class Store:
     def recover(self):
         """Only recover jobs whose owning OS process demonstrably no longer exists."""
         count = 0
-        for row in self.db.execute("SELECT id,pid,process_created FROM jobs WHERE status='running'").fetchall():
+        for row in self.db.execute("SELECT id,owner,pid,process_created FROM jobs WHERE status='running'").fetchall():
             try:
                 if not row["pid"]:
                     raise ProcessLookupError()
@@ -153,11 +266,12 @@ class Store:
                     raise ProcessLookupError()
             except (ProcessLookupError, psutil.NoSuchProcess):
                 with self.db:
-                    self.db.execute(
-                        "UPDATE jobs SET status='cancelled',pid=0,error='Interrupted by shutdown; retry to resume.',updated=? WHERE id=? AND status='running'",
-                        (time.time(), row["id"]),
+                    result = self.db.execute(
+                        "UPDATE jobs SET status='cancelled',pid=0,error='Interrupted by shutdown; retry to resume.',updated=? "
+                        "WHERE id=? AND status='running' AND owner=? AND pid=? AND process_created=?",
+                        (time.time(), row["id"], row["owner"], row["pid"], row["process_created"]),
                     )
-                count += 1
+                count += result.rowcount
             except (PermissionError, psutil.AccessDenied):
                 pass
         return count
@@ -174,7 +288,14 @@ class Store:
         # Removes records only. Never removes downloaded user files.
         with self.db:
             for job_id in ids:
-                self.db.execute("DELETE FROM jobs WHERE id=? AND status!='running'", (job_id,))
+                self.db.execute(
+                    "UPDATE jobs SET removed=1,updated=? WHERE id=? AND status!='running'", (time.time(), job_id)
+                )
+
+    def restore(self, ids):
+        with self.db:
+            for job_id in ids:
+                self.db.execute("UPDATE jobs SET removed=0,updated=? WHERE id=?", (time.time(), job_id))
 
     def setting(self, key, default=None):
         row = self.db.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()

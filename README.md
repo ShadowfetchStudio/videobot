@@ -2,9 +2,9 @@
 
 **Discover media, choose what to save, and keep a reliable download library.**
 
-VideoBot is a Python/PySide6 desktop app and headless CLI built around yt-dlp, Playwright and FFmpeg. Version 2.0 replaces the original gallery-only loop with preview and selection, a persistent queue, validated outputs and recoverable job states.
+VideoBot is a Python/PySide6 desktop app and headless CLI built around yt-dlp, Playwright and FFmpeg. Version 2.1 adds a four-page daily workspace, editable jobs, scheduling, a searchable library, integrity tools and richer output choices to the durable download engine.
 
-> Version 2.0 source and desktop packaging. See the [release audit](docs/RELEASE-AUDIT.md) and [current CI checks](https://github.com/ShadowfetchStudio/videobot/actions) for verification and platform status. Upstream website and authenticated-account behavior is not implied by local acceptance tests.
+> Version 2.1 source and desktop packaging. See the [release audit](docs/RELEASE-AUDIT.md) and [current CI checks](https://github.com/ShadowfetchStudio/videobot/actions) for verification and platform status. Upstream website and authenticated-account behavior is not implied by local acceptance tests.
 
 ![VideoBot desktop preview with example fixture](docs/images/desktop.png)
 
@@ -14,25 +14,28 @@ VideoBot is a Python/PySide6 desktop app and headless CLI built around yt-dlp, P
 - Preview titles, duration, formats when provided by the source, creator and thumbnails; select items before queuing.
 - Persistent SQLite queue and history; duplicate prevention, retry failed/interrupted jobs and restart recovery.
 - Real transfer progress, speed/ETA where known, plain-text bounded logs and explicit completed/failed/cancelled states.
-- Strict resolution ceilings, native/MP4/WebM containers, MP3 audio, subtitle selection, thumbnails, metadata and optional time ranges.
+- Strict resolution ceilings through 2160p (including 1440p), native/MP4/WebM, five audio formats, bitrate controls, subtitles, thumbnails and fast or accurate time ranges.
 - Editing-compatible H.264/AAC preset (transcodes and therefore takes longer).
 - Job-owned temporary storage, ffprobe validation, exact output paths and atomic completed-folder publication.
 - Per-video folders with provenance, SHA-256 checksums, creator/title, retrieval time and rights notes.
 - Opt-in browser/cookie-file authentication for the current session; no cookies in saved profiles or exported manifests.
 - Bounded discovery, size/free-space budgets, retries and a minimum five-second cooldown after successful downloads.
-- Saved output profiles, URL-file import, library-manifest export and a CLI using the same engine.
+- Search/filter, selected-only runs, priorities, scheduled starts while the app is open, explicit job editing and record undo/restore.
+- Project/tags, readable filenames, playback in your default player, checksum verification and JSON/CSV library exports.
+- Saved output profiles, backup/recovery, safe partial cleanup, background diagnostics, tools-folder selection, themes and optional notifications.
+- Expanded CLI using the same engine. See the [full capability audit and seven workflows](docs/CAPABILITIES-AND-WORKFLOWS.md).
 
 ## Desktop build downloads
 
-Open a successful [Desktop packages workflow](https://github.com/ShadowfetchStudio/videobot/actions/workflows/build.yml) and download the artifact for your system (GitHub sign-in required). Each artifact contains the package and `SHA256SUMS.txt`:
+Published versions appear on [GitHub Releases](https://github.com/ShadowfetchStudio/videobot/releases). For development builds, open a successful [Desktop packages workflow](https://github.com/ShadowfetchStudio/videobot/actions/workflows/build.yml) and download the artifact for your system (GitHub sign-in required). Each artifact contains the package and `SHA256SUMS.txt`:
 
 | System | Package | Installation |
 |---|---|---|
-| Windows x64 | `VideoBot-2.0.0-Windows-Setup.exe` | Per-user installer; administrator access is not required. |
+| Windows x64 | `VideoBot-2.1.0-Windows-Setup.exe` | Per-user installer; administrator access is not required. |
 | macOS Apple silicon | `VideoBot-macOS.dmg` | Open the disk image and copy VideoBot to Applications. |
 | Linux x64 | `VideoBot-Linux.tar.gz` | Extract the entire folder and run its `VideoBot` executable. |
 
-These are CI build artifacts, not a separately published GitHub Release. They bundle Python, Qt and headless Chromium, but still require FFmpeg/ffprobe and a supported JavaScript runtime as described below. They are unsigned/unnotarized; verify provenance and checksums before choosing whether to run them. Intel macOS and other Linux baselines need their own build and validation.
+Workflow artifacts are development builds; a published release is separately identified by its version tag and release notes. Packages bundle Python, Qt and headless Chromium, but still require FFmpeg/ffprobe and a supported JavaScript runtime as described below. They are unsigned/unnotarized; verify provenance and checksums before choosing whether to run them. Intel macOS and other Linux baselines need their own build and validation.
 
 ## Install from source
 
@@ -72,17 +75,19 @@ For reproducible development, see [development and packaging](docs/DEVELOPMENT.m
 1. Paste one URL per line and click **Inspect URLs**. Discovery does not download the full videos.
 2. Review the candidate list and select the items you want. Playlist entries may not have format/size metadata until extraction; unknown values are shown honestly.
 3. Choose destination/output options and click **Queue selected videos**.
-4. Open **Queue & history**, then **Run queue**.
+4. Open **Queue**, then **Run queue** or **Run selected**. Search, priority and scheduling are available here.
 5. Use **Stop / pause** to end the current run. Select interrupted jobs and **Retry selected** to requeue them; already queued jobs remain queued.
-6. Use **Open output** for a completed bundle or **Export manifest** for your research library.
+6. Open **Library** to play media, open folders, verify checksums or export JSON/CSV source credits.
+
+Use **Settings** for output choices, profiles, appearance, tool setup and backup. **Queue → Edit settings** applies a deliberate change to an idle job.
 
 Authentication choices are session-only. Choose the needed browser or cookie file again when running authenticated queued jobs after a restart. Changing settings does not silently rewrite already queued jobs.
 
 ## Outputs and preservation
 
-Each completed job is published as `VideoBot-<job-id>/` under the chosen destination. The folder contains the final media, requested sidecars and `manifest.json`. A hidden `.videobot-staging/` directory holds unfinished job files; interrupted work never appears as a completed final folder. Do not delete staging files while a job is running.
+Each completed job is published as `VideoBot-<job-id>/` under the chosen destination. Format-affecting edits use a revision suffix such as `-r1`; old output folders are preserved. The folder contains title-named final media, requested sidecars and `manifest.json`. A hidden `.videobot-staging/` directory holds unfinished job files; interrupted work never appears as a completed final folder. Do not delete staging files while a job is running.
 
-VideoBot checks real media streams instead of rejecting valid clips based on file size. It does not delete pre-existing user files. Removing queue records does not remove media. Query parameters are redacted from exported source URLs to avoid leaking signed credentials; the private queue retains URLs needed for retry. Rights notes default to **unknown** and should be checked before reuse.
+VideoBot checks real media streams instead of rejecting valid clips based on file size. It does not delete pre-existing user files. Removing queue records hides them until restored; it does not remove media. Selected idle partials can be inventoried and cleaned explicitly. Query parameters are redacted from exported source URLs to avoid leaking signed credentials; the private queue retains URLs needed for retry. Rights notes default to **unknown** and should be checked before reuse.
 
 ## Headless CLI
 
@@ -104,7 +109,8 @@ Use `videobot --db /path/to/queue.sqlite3 ...` for an alternate queue. Set `VIDE
 - yt-dlp downloads can resume when supported. Raw HTTP transfers restart safely instead of appending to a possibly changed resource.
 - Generic web crawling stays on the listing origin for navigation and uses page/item/scroll budgets. A warning identifies truncated discovery. Dynamic sites may require a dedicated extractor or manual input.
 - Subtitle/thumbnail availability depends on the source. Cookie access can require OS permission and does not bypass account restrictions or DRM.
-- Stream-copy time ranges can align to keyframes; they are not frame-accurate edits. Editing conversion changes the encoding.
+- Fast stream-copy time ranges can align to keyframes. Accurate ranges download the full selected source and re-encode, within frame/sample timing. Editing conversion changes the encoding.
+- Scheduling requires an open app with Auto-run enabled; no background daemon or computer wake service is installed. Playback uses your OS default player.
 - See [troubleshooting](docs/TROUBLESHOOTING.md), [architecture](docs/ARCHITECTURE.md), [changelog](CHANGELOG.md) and [security](SECURITY.md).
 
 ## Contributing

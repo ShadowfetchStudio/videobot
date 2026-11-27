@@ -8,7 +8,7 @@ from pathlib import Path
 
 from .engine import inspect_urls, run_queue
 from .models import Candidate, Options
-from .runtime import Cancelled, Cancellation, configure_tool_path, diagnostics, emit_stdout, redact
+from .runtime import Cancelled, Cancellation, configure_tool_path, diagnostics, emit_stdout, public_data, redact
 from .storage import Store
 
 
@@ -20,6 +20,25 @@ def task(request):
         sys.stderr = sys.stdout
     cancel = Cancellation(request.get("cancel_path"))
     try:
+        if request["action"] == "doctor":
+            emit_stdout("diagnostics", report=diagnostics())
+            emit_stdout("result", status="completed")
+            return 0
+        if request["action"] == "verify":
+            from .library import verify
+
+            failed = 0
+            for job in request["jobs"]:
+                result = verify(job, cancel)
+                failed += not result["ok"]
+                emit_stdout("verification", **result)
+            emit_stdout(
+                "result",
+                status="failed" if failed else "completed",
+                failed=failed,
+                completed=len(request["jobs"]) - failed,
+            )
+            return int(bool(failed))
         if request["action"] == "download":
             from .downloader import Downloader
 
@@ -61,12 +80,54 @@ def main(argv=None):
     add.add_argument("--audio-only", action="store_true")
     add.add_argument("--subtitles", default="")
     add.add_argument("--max-items", type=int, default=2000)
-    sub.add_parser("list", help="List queue and history")
-    retry = sub.add_parser("retry", help="Requeue failed/cancelled jobs")
-    retry.add_argument("ids", nargs="+")
-    run = sub.add_parser("run", help="Run queued jobs; Ctrl-C stops the current run")
+    for command in (inspect, add):
+        command.add_argument("--cookie-file", default="")
+        command.add_argument("--cookie-browser", default="")
+        command.add_argument("--max-pages", type=int, default=50)
+    add.add_argument("--audio-format", default="mp3", choices=["mp3", "m4a", "flac", "wav", "opus"])
+    add.add_argument("--audio-bitrate", type=int, default=192)
+    add.add_argument("--accurate-range", action="store_true")
+    add.add_argument("--segment-start", type=float)
+    add.add_argument("--segment-end", type=float)
+    add.add_argument("--editing-compatible", action="store_true")
+    add.add_argument("--automatic-subtitles", action="store_true")
+    add.add_argument("--thumbnail", action="store_true")
+    add.add_argument("--no-metadata", dest="embed_metadata", action="store_false")
+    add.add_argument("--rate-limit", type=int, default=0, help="Bytes per second; zero is unlimited")
+    add.add_argument("--max-bytes", type=int, default=Options().max_bytes)
+    add.add_argument("--min-free-bytes", type=int, default=Options().min_free_bytes)
+    add.add_argument("--retries", type=int, default=3)
+    add.add_argument("--cooldown", type=float, default=5)
+    add.add_argument("--project", default="")
+    add.add_argument("--tags", default="")
+    add.add_argument("--rights-notes", default=Options().rights_notes)
+    listing = sub.add_parser("list", help="List queue and history (redacted)")
+    listing.add_argument("--removed", action="store_true", help="Include removed records")
+    for name in ("retry", "remove", "restore", "verify"):
+        command = sub.add_parser(name)
+        command.add_argument("ids", nargs="+")
+    edit = sub.add_parser("edit", help="Update idle job settings with a JSON object; retains ID/history")
+    edit.add_argument("id")
+    edit.add_argument("settings", help="Path to JSON object of Options fields to change")
+    organize = sub.add_parser("organize", help="Set priority and/or scheduled Unix timestamp")
+    organize.add_argument("ids", nargs="+")
+    organize.add_argument("--priority", type=int)
+    organize.add_argument("--not-before", type=float)
+    for name in ("export", "backup"):
+        command = sub.add_parser(name)
+        command.add_argument("path")
+    run = sub.add_parser("run", help="Run eligible queued jobs; Ctrl-C stops the current run")
+    run.add_argument("--ids", nargs="+", help="Run only selected job IDs")
     run.add_argument("--cookie-file", default="")
     run.add_argument("--cookie-browser", default="")
+    cleanup = sub.add_parser(
+        "clean-partials", help="Inventory selected jobs' staging; --delete removes only their partial files"
+    )
+    cleanup.add_argument("ids", nargs="+")
+    cleanup.add_argument("--delete", action="store_true")
+    restore_db = sub.add_parser("restore-backup", help="Restore backup to a new database, never overwriting a queue")
+    restore_db.add_argument("source")
+    restore_db.add_argument("target")
     internal = sub.add_parser("_task", help=argparse.SUPPRESS)
     internal.add_argument("request")
     args = parser.parse_args(argv)
@@ -78,19 +139,55 @@ def main(argv=None):
     if args.command == "doctor":
         print(json.dumps(diagnostics(), indent=2))
         return 0
+    if args.command == "restore-backup":
+        from .maintenance import restore_backup
+
+        try:
+            print(restore_backup(args.source, args.target))
+            return 0
+        except Exception as exc:
+            print(redact(exc), file=sys.stderr)
+            return 1
     store = Store(args.db)
     try:
+        if args.command == "clean-partials":
+            from .maintenance import staging
+
+            print(json.dumps(staging(store, args.ids, delete=args.delete), indent=2))
+            return 0
         if args.command == "list":
-            # Do not export private query parameters from stored source URLs.
-            rows = store.rows()
-            for row in rows:
-                row["candidate"]["url"] = redact(row["candidate"]["url"])
-                row["candidate"]["referer"] = redact(row["candidate"]["referer"])
-            print(json.dumps(rows, indent=2))
+            print(json.dumps(public_data(store.rows(include_removed=args.removed)), indent=2))
             return 0
-        if args.command == "retry":
-            store.retry(args.ids)
+        if args.command in ("retry", "remove", "restore"):
+            getattr(store, args.command)(args.ids)
             return 0
+        if args.command == "organize":
+            store.organize(args.ids, args.priority, args.not_before)
+            return 0
+        if args.command == "edit":
+            job = next((r for r in store.rows() if r["id"] == args.id), None)
+            if job is None:
+                raise ValueError("Job not found.")
+            changes = json.loads(Path(args.settings).read_text(encoding="utf-8"))
+            store.edit(args.id, Options(**{**job["options"], **changes}))
+            return 0
+        if args.command == "backup":
+            print(store.backup(args.path))
+            return 0
+        if args.command == "export":
+            from .library import export_library
+
+            print(export_library(store.rows(), args.path))
+            return 0
+        if args.command == "verify":
+            from .library import verify
+
+            jobs = [r for r in store.rows() if r["id"] in args.ids]
+            if len(jobs) != len(set(args.ids)) or any(r["status"] != "completed" for r in jobs):
+                raise ValueError("Select existing completed jobs to verify.")
+            results = [verify(r, Cancellation()) for r in jobs]
+            print(json.dumps(results, indent=2))
+            return int(any(not r["ok"] for r in results))
         cancel = Cancellation()
         if args.command == "run":
             owner = uuid.uuid4().hex
@@ -100,6 +197,7 @@ def main(argv=None):
                     cancel,
                     emit_stdout,
                     owner=owner,
+                    ids=args.ids,
                     auth={"cookie_file": args.cookie_file, "cookie_browser": args.cookie_browser},
                 )
                 return 1 if status in ("failed", "partial") else 0
@@ -108,15 +206,22 @@ def main(argv=None):
                 store.interrupt_owner(owner)
                 return 130
         options = Options()
-        for key in ("destination", "quality", "container", "audio_only", "subtitles", "max_items"):
+        for key in Options.__dataclass_fields__:
             if hasattr(args, key):
                 setattr(options, key, getattr(args, key))
-        items = inspect_urls(args.urls, options, cancel, emit_stdout)
+        failed = []
+
+        def event(kind, **data):
+            if kind == "discovery_error":
+                failed.append(data)
+            emit_stdout(kind, **public_data(data))
+
+        items = inspect_urls(args.urls, options, cancel, event)
         if args.command == "add":
             for candidate in items:
                 job_id, added = store.add(candidate, options)
                 emit_stdout("queued", job_id=job_id, added=added)
-        return 0
+        return int(bool(failed))
     except KeyboardInterrupt:
         return 130
     except Exception as exc:

@@ -10,8 +10,10 @@ from .storage import Store
 
 
 def inspect_urls(urls, options, cancel, emit):
-    items = Discovery(options, cancel, emit).inspect(urls)
-    emit("result", status="completed", count=len(items))
+    discovery = Discovery(options, cancel, emit)
+    items = discovery.inspect(urls)
+    status = "partial" if items and discovery.errors else "failed" if discovery.errors else "completed"
+    emit("result", status=status, count=len(items), failed=len(discovery.errors))
     return items
 
 
@@ -37,7 +39,7 @@ def run_queue(db_path, cancel, emit, owner=None, ids=None, auth=None):
                 emit(kind, **data)
 
             try:
-                output = Downloader(options, cancel, event).download(job["id"], candidate)
+                output = Downloader(options, cancel, event).download(job["id"], candidate, revision=job["revision"])
                 store.finish(job["id"], owner, "completed", output=output)
                 totals["completed"] += 1
                 emit("job", job_id=job["id"], status="completed", output=output)
