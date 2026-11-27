@@ -104,3 +104,17 @@ Install FFmpeg/ffprobe first. On Windows, use the shell's environment-variable s
 | F22 packaging | PyInstaller + platform package workflow | packaged GUI/browser/native transfer smoke on all three OS families; final checks linked above |
 | F23 no tests/CI | pytest fixture suite + multi-platform workflow | 38 local tests; final CI checks linked above |
 | F24 resources/retries | byte/free-space guards, bounded retry and cooldown | byte/reserve limits, Retry-After and response cleanup tests; supervised FFmpeg guard |
+
+## 2.2 library tools — November 26, 2026
+
+Added embedded player/range markers/derived clips, verified moved-bundle relinking and local transcription with persistent timestamp search. The README and LIBRARY-TOOLS guide distinguish source/development builds from separately published releases.
+
+Local macOS verification:
+
+- 64 tests passed, including real generated-media clipping, decoded video frames, persisted markers, bounded relink failure cases, cancellation/index preservation, transcript backup/search, and real PyAV decoding.
+- Ruff lint/format and dependency audit passed (the local project itself is not in the advisory database).
+- Generated spoken audio transcribed with tiny CPU int8; a literal search for “golden telescope” returned the actual 3.0-second segment.
+- Frozen macOS package passed GUI, embedded player, clip creation, native download, bundled browser inspection and tiny-model transcription checks. These checks exposed and fixed PyAV 19 incompatibility and frozen multiprocessing resource-tracker startup.
+- Native GUI inspection confirmed video frames, wrapped transcript lines, timestamp seeking and search-result navigation. Small preview layout was inspected at 680×560; default preview is 1000×760.
+
+Cross-platform source and packaged checks run on every PR. Consult the linked GitHub checks for the exact tested commit and current result; this local record does not imply Windows/Linux manual GUI review, speech accuracy on arbitrary recordings, signed installers, or publication of a new release.

@@ -17,3 +17,9 @@ Authentication configuration is passed to the worker through a private temporary
 ## Extension points
 
 Add source-specific discovery through yt-dlp before adding broad DOM heuristics. Add new output policies through Options and downloader validation, with CLI/GUI serialization tests. Keep GUI state out of the engine so it can run on a headless machine. Remote network control of the queue is not implemented in this release.
+
+## Local library tools
+
+`media_tools.py` owns verified relinking, new derived clip bundles and transcription publication. `player.py` owns QMediaPlayer preview, saved range markers and timestamp navigation. CLI and GUI call the same background operations through TaskWorker. Transcription uses local faster-whisper CPU int8; model downloads require an explicit flag. SQLite `transcripts` and `transcript_segments` tables are additive migrations. Search uses a parameterized Unicode-casefolded literal substring, limited result count, and excludes soft-removed records. Backups include the index; model caches and media require separate backup.
+
+Relinking compares-and-updates the observed completed path after checking identity, options and hashes. Transcripts publish uniquely named sidecar folders before atomically replacing the index, preserving earlier versions. Clips publish a new UUID bundle and completed record with parent/hash/range provenance. Media originals are never overwritten.

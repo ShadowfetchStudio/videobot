@@ -48,7 +48,15 @@ def main():
                 "-f",
                 "lavfi",
                 "-i",
-                "color=c=blue:s=128x96:d=1",
+                "color=c=blue:s=128x96:d=5",
+                "-f",
+                "lavfi",
+                "-i",
+                "anullsrc=r=16000:cl=mono",
+                "-t",
+                "5",
+                "-c:a",
+                "aac",
                 "-c:v",
                 "libx264",
                 str(web / "clip.mp4"),
@@ -77,7 +85,7 @@ def main():
                 [str(binary), "--worker-task", str(request)],
                 capture_output=True,
                 text=True,
-                timeout=90,
+                timeout=240,
                 env=child_env,
             )
             text = result.stdout + (events.read_text(encoding="utf-8") if events.exists() else "")
@@ -105,11 +113,43 @@ def main():
             assert job["status"] == "completed", job
             manifest = json.loads((Path(job["output"]) / "manifest.json").read_text(encoding="utf-8"))
             assert manifest["files"]
+            subprocess.run(
+                [str(binary), "--smoke-ui", str(root / "player.png")],
+                check=True,
+                timeout=30,
+                env={**child_env, "VIDEOBOT_HOME": str(root), "VIDEOBOT_SMOKE_JOB": job["id"]},
+            )
+            task(
+                {
+                    "action": "clip",
+                    "db": str(store.path),
+                    "job_id": job["id"],
+                    "start": 0.2,
+                    "end": 0.8,
+                    "destination": str(root / "clips"),
+                },
+                "clip",
+            )
+            # Exercise native speech libraries, model loading, PyAV and bundled VAD in the frozen executable.
+            task(
+                {
+                    "action": "transcribe",
+                    "db": str(store.path),
+                    "job_id": job["id"],
+                    "model": "tiny",
+                    "allow_download": True,
+                },
+                "transcribe",
+            )
+            assert store.transcript(job["id"]) is not None
             store.close()
             print(
                 json.dumps(
                     {
                         "packaged_gui": "passed",
+                        "packaged_player": "passed",
+                        "packaged_clip": "passed",
+                        "packaged_transcription": "passed",
                         "packaged_browser_inspection": "passed",
                         "packaged_native_download": "passed",
                         "manifest_files": len(manifest["files"]),

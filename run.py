@@ -4,6 +4,11 @@
 import sys
 import os
 from pathlib import Path
+import multiprocessing
+
+# Dispatch frozen resource-tracker/spawn children before importing Qt or the app.
+if __name__ == "__main__":
+    multiprocessing.freeze_support()
 
 if getattr(sys, "frozen", False):
     bundled = Path(sys._MEIPASS) / "playwright" / "driver" / "package" / ".local-browsers"

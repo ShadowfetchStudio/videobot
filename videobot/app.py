@@ -46,7 +46,7 @@ from PySide6.QtWidgets import (
 from . import __version__
 from .models import Candidate, Options
 from .runtime import configure_tool_path, public_data, redact
-from .library import export_library, playable
+from .library import export_library
 from .storage import Store
 from .worker import TaskWorker
 
@@ -268,11 +268,15 @@ class MainWindow(QMainWindow):
         self.library.itemSelectionChanged.connect(self.update_actions)
         lib.addWidget(self.library)
         actions = QHBoxLayout()
-        actions.addWidget(self.button("Play media", self.play_selected, True))
+        actions.addWidget(self.button("Preview / clip / transcribe", self.play_selected, True))
         actions.addWidget(self.button("Open folder", self.open_output))
         actions.addWidget(self.button("Verify files", self.verify_selected))
         actions.addWidget(self.button("Export JSON / CSV", self.export_manifest))
         lib.addLayout(actions)
+        more_library = QHBoxLayout()
+        more_library.addWidget(self.button("Relink moved media…", self.relink_selected))
+        more_library.addWidget(self.button("Search all transcripts…", self.search_transcripts))
+        lib.addLayout(more_library)
         self.tabs.addTab(library, "3  Library")
         left_layout.addWidget(self.tabs)
         self.status = QLabel("Ready")
@@ -792,7 +796,7 @@ class MainWindow(QMainWindow):
                 )
         self.update_actions()
         self.library_summary.setText(
-            f"{len(saved)} saved item(s). Double-click to play in your default media player."
+            f"{len(saved)} saved item(s). Double-click to preview, mark a clip or transcribe."
             if saved
             else "Your saved media will appear here after a download completes. Sources and checksums travel with every bundle."
         )
@@ -839,6 +843,11 @@ class MainWindow(QMainWindow):
             self.log_toggle.setChecked(True)
         elif kind == "verification":
             self.log.appendPlainText(f"{event['job_id']}: {'Verified' if event['ok'] else '; '.join(event['errors'])}")
+            self.log_toggle.setChecked(True)
+        elif kind == "relink":
+            self.log.appendPlainText(
+                f"{event['job_id']}: " + ("Relinked to " + event["output"] if event["ok"] else event["error"])
+            )
             self.log_toggle.setChecked(True)
         elif kind == "log":
             self.log.appendPlainText(event.get("message", ""))
@@ -931,6 +940,7 @@ class MainWindow(QMainWindow):
             "open_output": any(r["output"] for r in selected),
             "verify_selected": not busy and any(r["status"] == "completed" for r in selected),
             "show_diagnostics": not busy,
+            "relink_selected": not busy and any(r["status"] == "completed" for r in selected),
             "queue_selected": any(
                 self.preview.item(i, 0) and self.preview.item(i, 0).checkState() == Qt.CheckState.Checked
                 for i in range(self.preview.rowCount())
@@ -1075,13 +1085,31 @@ class MainWindow(QMainWindow):
     def play_selected(self):
         try:
             job = next((r for r in self.rows if r["id"] in self.selected_ids() and r["status"] == "completed"), None)
-            path = playable(job) if job else None
-            if path:
-                QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+            if job:
+                from .player import MediaDialog
+
+                dialog = MediaDialog(self, job)
+                dialog.exec()
+                dialog.deleteLater()
             else:
                 self.status.setText("Select a completed item with an existing media file.")
         except Exception as exc:
             self._error(exc)
+
+    def relink_selected(self):
+        ids = [j["id"] for j in self.rows if j["id"] in self.selected_ids() and j["status"] == "completed"]
+        if not ids:
+            return
+        folder = QFileDialog.getExistingDirectory(self, "Choose moved bundle or its new parent folder")
+        if folder:
+            self.start_task({"action": "relink", "db": str(self.store.path), "ids": ids, "root": folder})
+
+    def search_transcripts(self):
+        from .player import TranscriptSearch
+
+        dialog = TranscriptSearch(self)
+        dialog.exec()
+        dialog.deleteLater()
 
     def verify_selected(self):
         jobs = [r for r in self.rows if r["id"] in self.selected_ids() and r["status"] == "completed"]
@@ -1229,12 +1257,30 @@ def main():
     window = MainWindow()
     window.show()
     if smoke_image:
+        smoke_job = os.environ.get("VIDEOBOT_SMOKE_JOB")
+        if smoke_job:
+            from .player import MediaDialog
 
-        def capture():
-            window.grab().save(smoke_image)
-            window.close()
+            job = next(j for j in window.store.rows() if j["id"] == smoke_job)
+            preview = MediaDialog(window, job)
+            preview.show()
+            preview.player.play()
 
-        QTimer.singleShot(300, capture)
+            def capture():
+                ok = preview.player.duration() > 0 and preview.player.position() > 0
+                preview.grab().save(smoke_image)
+                preview.close()
+                window.close()
+                app.exit(0 if ok else 1)
+
+            QTimer.singleShot(2000, capture)
+        else:
+
+            def capture():
+                window.grab().save(smoke_image)
+                window.close()
+
+            QTimer.singleShot(300, capture)
     result = app.exec()
     # Destroy widgets while QApplication and the Python bindings are still alive.
     # Frozen Linux/Windows builds otherwise crash in PySide atexit cleanup.

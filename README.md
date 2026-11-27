@@ -2,9 +2,9 @@
 
 **Discover media, choose what to save, and keep a reliable download library.**
 
-VideoBot is a Python/PySide6 desktop app and headless CLI built around yt-dlp, Playwright and FFmpeg. Version 2.1 adds a four-page daily workspace, editable jobs, scheduling, a searchable library, integrity tools and richer output choices to the durable download engine.
+VideoBot is a Python/PySide6 desktop app and headless CLI built around yt-dlp, Playwright and FFmpeg. Version 2.2 adds embedded playback, visual clip markers, verified media relinking and local speech transcription with timestamp search to the four-page download workspace.
 
-> Version 2.1 source and desktop packaging. See the [release audit](docs/RELEASE-AUDIT.md) and [current CI checks](https://github.com/ShadowfetchStudio/videobot/actions) for verification and platform status. Upstream website and authenticated-account behavior is not implied by local acceptance tests.
+> Version 2.2 source and development packages. The latest published release may have an earlier version; check its release notes before downloading. See the [release audit](docs/RELEASE-AUDIT.md) and [current CI checks](https://github.com/ShadowfetchStudio/videobot/actions) for verification and platform status. Upstream website and authenticated-account behavior is not implied by local acceptance tests.
 
 ![VideoBot desktop preview with example fixture](docs/images/desktop.png)
 
@@ -21,9 +21,11 @@ VideoBot is a Python/PySide6 desktop app and headless CLI built around yt-dlp, P
 - Opt-in browser/cookie-file authentication for the current session; no cookies in saved profiles or exported manifests.
 - Bounded discovery, size/free-space budgets, retries and a minimum five-second cooldown after successful downloads.
 - Search/filter, selected-only runs, priorities, scheduled starts while the app is open, explicit job editing and record undo/restore.
-- Project/tags, readable filenames, playback in your default player, checksum verification and JSON/CSV library exports.
+- Project/tags, readable filenames, embedded playback, saved visual In/Out markers, new clip exports, checksum verification and JSON/CSV library exports.
+- Relink moved library bundles by job identity, output settings and SHA-256 verification; ambiguous matches are left unchanged.
+- Local CPU transcription (tiny/base/small Whisper), TXT/VTT/JSON sidecars, and cross-library transcript search with click-to-seek. First-use model downloads are opt-in; audio is not uploaded.
 - Saved output profiles, backup/recovery, safe partial cleanup, background diagnostics, tools-folder selection, themes and optional notifications.
-- Expanded CLI using the same engine. See the [full capability audit and seven workflows](docs/CAPABILITIES-AND-WORKFLOWS.md).
+- Expanded CLI using the same engine. See the [full capability audit and workflows](docs/CAPABILITIES-AND-WORKFLOWS.md).
 
 ## Desktop build downloads
 
@@ -31,11 +33,11 @@ Published versions appear on [GitHub Releases](https://github.com/ShadowfetchStu
 
 | System | Package | Installation |
 |---|---|---|
-| Windows x64 | `VideoBot-2.1.0-Windows-Setup.exe` | Per-user installer; administrator access is not required. |
+| Windows x64 | `VideoBot-VERSION-Windows-Setup.exe` | Per-user installer; administrator access is not required. |
 | macOS Apple silicon | `VideoBot-macOS.dmg` | Open the disk image and copy VideoBot to Applications. |
 | Linux x64 | `VideoBot-Linux.tar.gz` | Extract the entire folder and run its `VideoBot` executable. |
 
-Workflow artifacts are development builds; a published release is separately identified by its version tag and release notes. Packages bundle Python, Qt and headless Chromium, but still require FFmpeg/ffprobe and a supported JavaScript runtime as described below. They are unsigned/unnotarized; verify provenance and checksums before choosing whether to run them. Intel macOS and other Linux baselines need their own build and validation.
+Workflow artifacts are development builds; a published release is separately identified by its version tag and release notes. Packages bundle Python, Qt, the local speech engine and headless Chromium, but still require FFmpeg/ffprobe and a supported JavaScript runtime as described below. They are unsigned/unnotarized; verify provenance and checksums before choosing whether to run them. Intel macOS and other Linux baselines need their own build and validation.
 
 ## Install from source
 
@@ -118,3 +120,20 @@ Use `videobot --db /path/to/queue.sqlite3 ...` for an alternate queue. Set `VIDE
 Read [CONTRIBUTING.md](CONTRIBUTING.md). Reproduction fixtures should be local/generated and must not contain account cookies or signed URLs. Changes to the downloader should include failure-path tests, not only a successful transfer.
 
 [Support ShadowfetchStudio](https://www.buymeacoffee.com/shadowfetcu) · [Report a bug](https://github.com/ShadowfetchStudio/videobot/issues)
+
+## Preview, clip, relink and search speech
+
+Double-click a completed **Library** item to open **Preview / clip / transcribe**. Play or scrub, set **Mark In** and **Mark Out**, then **Export marked clip** to create a separate library bundle. Original downloads are preserved. Clips use H.264/AAC MP4 (audio-only items use AAC M4A).
+
+If a drive or folder moved, select the affected completed items and choose **Relink moved media**. Pick their new parent folder, or a single bundle folder to disambiguate duplicate copies. This validates every listed file before changing its library path; it does not move or delete media.
+
+For speech, choose a model in the preview and enable **Allow model download on first use** for the initial download from Hugging Face. Tiny is the fastest (~75 MB), base is balanced (~145 MB), small is slower (~485 MB). Models are cached beside the queue database under `speech-models`; subsequent runs work offline with the checkbox off. No API key or cloud transcription account is needed. Use **Search all transcripts** in Library to find a phrase and double-click to seek. Automatic transcripts need review; silence can produce an empty transcript. There is no speaker labeling or translation mode.
+
+```sh
+videobot clip JOB_ID 12.5 22.5 "/media/clips"
+videobot relink "/new-drive/research" JOB_ID ANOTHER_JOB_ID
+videobot transcribe JOB_ID --model tiny --allow-download
+videobot search-transcripts "golden telescope"
+```
+
+Speech uses [faster-whisper](https://github.com/SYSTRAN/faster-whisper) locally. PyAV is constrained below version 19 because faster-whisper 1.2.1 uses an API removed in PyAV 19; a real audio-decoding regression test covers compatibility. See [library workflows and limits](docs/LIBRARY-TOOLS.md).

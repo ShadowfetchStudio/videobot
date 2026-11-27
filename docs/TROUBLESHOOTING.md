@@ -12,3 +12,13 @@
 - **Already queued:** duplicate prevention includes source identity, destination and output policy. Retry a failed record instead of changing unrelated discovery settings to bypass deduplication.
 
 Include OS, Python/app/dependency versions, a sanitized error and whether the problem reproduces with a public or local fixture when filing an issue.
+
+## Preview, moved files and local speech
+
+- If a completed item is missing after a drive move, select it in Library and use **Relink moved media**. Choose a single bundle if multiple copies match. The activity log explains failed identity/settings/hash checks.
+- Embedded playback depends on the Qt multimedia backend and the source codec. An unsupported codec displays an error; use an editing-compatible MP4 copy or an external player for unusual formats.
+- First-time transcription needs the model-download checkbox and internet access to Hugging Face. After caching, leave the checkbox off for offline operation. A missing cache fails without uploading audio or falling back to a cloud service.
+- Tiny/base/small run on CPU, with different speed/accuracy and memory costs. Stop cancels the supervised worker, including model loading. Keep previous transcript sidecars until you have reviewed the replacement.
+- Source installs constrain PyAV below 19 for faster-whisper 1.2.x compatibility. Use the project dependency metadata/locks rather than separately upgrading PyAV.
+
+On Linux, audio playback requires PipeWire or PulseAudio. When no PipeWire runtime socket is present, VideoBot selects Qt's PulseAudio backend to avoid a Qt 6.12 probe crash on minimal systems. An explicit `QT_AUDIO_BACKEND` choice is preserved. Video can still preview without an audio device; install/start the distribution's sound service for audible playback.
